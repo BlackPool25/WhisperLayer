@@ -3,11 +3,17 @@
 import numpy as np
 import threading
 import queue
+import time
 import torch
+import gc
 from typing import Optional, Callable
 from dataclasses import dataclass
 
 from . import config
+
+
+# Model idle timeout (seconds) - unload model to save GPU memory
+MODEL_IDLE_TIMEOUT = 300  # 5 minutes
 
 
 @dataclass
@@ -33,11 +39,16 @@ class Transcriber:
         self.model = None
         self._model_lock = threading.Lock()
         self._is_loaded = False
+        self._last_use_time = 0.0
         
         # Processing state
         self._processing_queue: queue.Queue[np.ndarray] = queue.Queue()
         self._stop_event = threading.Event()
         self._worker_thread: Optional[threading.Thread] = None
+        
+        # Idle monitor thread
+        self._idle_monitor_thread: Optional[threading.Thread] = None
+        self._idle_monitor_stop = threading.Event()
         
         # Track last transcription to avoid duplicates
         self._last_text = ""
@@ -59,6 +70,44 @@ class Transcriber:
         else:
             self.device = "cpu"
             self.device_name = "CPU"
+    
+    def _start_idle_monitor(self):
+        """Start the idle monitor thread."""
+        if self._idle_monitor_thread is not None and self._idle_monitor_thread.is_alive():
+            return
+        
+        self._idle_monitor_stop.clear()
+        self._idle_monitor_thread = threading.Thread(target=self._idle_monitor_loop, daemon=True)
+        self._idle_monitor_thread.start()
+    
+    def _idle_monitor_loop(self):
+        """Monitor for idle timeout and unload model."""
+        while not self._idle_monitor_stop.is_set():
+            time.sleep(30)  # Check every 30 seconds
+            
+            if not self._is_loaded or self.model is None:
+                continue
+            
+            idle_time = time.time() - self._last_use_time
+            if idle_time > MODEL_IDLE_TIMEOUT:
+                print(f"Model idle for {idle_time:.0f}s, unloading to save GPU memory...")
+                self.unload_model()
+    
+    def unload_model(self):
+        """Unload the model to free GPU memory."""
+        with self._model_lock:
+            if self.model is not None:
+                print("Unloading Whisper model...")
+                del self.model
+                self.model = None
+                self._is_loaded = False
+                
+                # Force garbage collection and clear CUDA cache
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                print("Model unloaded, GPU memory freed")
         
     def load_model(self) -> None:
         """Load the Whisper model. Should be called before transcription."""
@@ -82,6 +131,11 @@ class Transcriber:
                 device=self.device
             )
             self._is_loaded = True
+            self._last_use_time = time.time()
+            
+            # Start idle monitor
+            self._start_idle_monitor()
+            
             print("Model loaded successfully!")
     
     def transcribe(self, audio: np.ndarray) -> TranscriptionResult:
@@ -96,6 +150,9 @@ class Transcriber:
         """
         if not self._is_loaded:
             self.load_model()
+        
+        # Update last use time
+        self._last_use_time = time.time()
         
         if self.model is None:
             return TranscriptionResult(text="", is_partial=False)
@@ -159,9 +216,13 @@ class Transcriber:
     def stop_worker(self) -> None:
         """Stop the background worker thread."""
         self._stop_event.set()
+        self._idle_monitor_stop.set()
         if self._worker_thread is not None:
             self._worker_thread.join(timeout=2.0)
             self._worker_thread = None
+        if self._idle_monitor_thread is not None:
+            self._idle_monitor_thread.join(timeout=1.0)
+            self._idle_monitor_thread = None
     
     def queue_audio(self, audio: np.ndarray) -> None:
         """Queue audio for background transcription."""

@@ -21,6 +21,8 @@ class VoiceTypeApp:
     """Main application controller for VoiceType."""
     
     def __init__(self, use_tray: bool = True):
+        self.settings = get_settings()
+        
         self.audio = AudioCapture()
         self.transcriber = Transcriber(on_transcription=self._on_transcription)
         self.overlay = OverlayController()
@@ -48,61 +50,74 @@ class VoiceTypeApp:
         # Final text to type after recording stops
         self._final_text = ""
         
-        # Register for settings changes
-        get_settings().add_callback(self._on_settings_change)
+        # Register for specific settings changes for hot-reload
+        self.settings.on_change("hotkey", self._on_hotkey_change)
+        self.settings.on_change("model", self._on_model_change)
+        self.settings.on_change("device", self._on_device_change)
+        self.settings.on_change("input_device_id", self._on_audio_device_change)
+        self.settings.on_change("silence_duration", self._on_silence_change)
+    
+    def _on_hotkey_change(self, new_value, old_value):
+        """Handle hotkey change - restart hotkey listener."""
+        print(f"Hotkey changed: {old_value} -> {new_value}")
+        self.hotkey.stop()
+        time.sleep(0.1)  # Brief delay for cleanup
+        self.hotkey = HotkeyManager(on_toggle=self._toggle_recording, hotkey=new_value)
+        self.hotkey.start()
+        if self.tray:
+            self.tray.show_notification("VoiceType", f"Hotkey updated to {new_value}")
+    
+    def _on_model_change(self, new_value, old_value):
+        """Handle model change - mark for reload."""
+        print(f"Model changed: {old_value} -> {new_value}")
+        self.transcriber._is_loaded = False
+        self.transcriber.model = None
+        if self.tray:
+            self.tray.show_notification("VoiceType", f"Model will reload: {new_value}")
+    
+    def _on_device_change(self, new_value, old_value):
+        """Handle compute device change."""
+        print(f"Compute device changed: {old_value} -> {new_value}")
+        self.transcriber._is_loaded = False
+        self.transcriber.model = None
+    
+    def _on_audio_device_change(self, new_value, old_value):
+        """Handle audio input device change."""
+        print(f"Audio device changed: {old_value} -> {new_value}")
+        self.audio.device = new_value
+    
+    def _on_silence_change(self, new_value, old_value):
+        """Handle silence duration change."""
+        print(f"Silence duration changed: {old_value} -> {new_value}")
+        config.SILENCE_DURATION = new_value
     
     def _show_settings(self):
         """Show settings window."""
         from .settings_ui import SettingsWindow
-        if self._settings_window is None:
-            self._settings_window = SettingsWindow(on_save=self._on_settings_saved)
+        if self._settings_window:
+            try:
+                self._settings_window.destroy()
+            except:
+                pass
+        self._settings_window = SettingsWindow(on_save=self._on_settings_saved)
         self._settings_window.show_all()
     
     def _on_settings_saved(self):
-        """Handle settings save - hot-reload components."""
-        old_hotkey = config.HOTKEY
-        old_model = config.WHISPER_MODEL
-        
-        # Reload config values
+        """Handle settings save - settings are now hot-reloaded via callbacks."""
+        # Reload config values for backward compatibility
         config.reload_settings()
-        
-        # Check what changed and reload components
-        settings = get_settings()
-        
-        # Hotkey changed - restart hotkey listener
-        if settings.hotkey != old_hotkey:
-            print(f"Reloading hotkey: {old_hotkey} -> {settings.hotkey}")
-            self.hotkey.stop()
-            self.hotkey = HotkeyManager(on_toggle=self._toggle_recording, hotkey=settings.hotkey)
-            self.hotkey.start()
-        
-        # Model changed - reload transcriber
-        if settings.model != old_model:
-            print(f"Reloading model: {settings.model}")
-            self.transcriber._is_loaded = False
-            self.transcriber.model = None
-            # Model will be reloaded on next transcription
-            if self.tray:
-                self.tray.show_notification("VoiceType", f"Model will reload: {settings.model}")
-        
-        # Audio device changed - update audio capture
-        if hasattr(self.audio, 'device'):
-            self.audio.device = settings.input_device
         
         if self.tray:
             self.tray.show_notification("VoiceType", "Settings applied!")
         
-        print("Settings reloaded successfully!")
-    
-    def _on_settings_change(self, key, value):
-        """Handle individual setting changes (called per-setting)."""
-        # This is called for each setting change, but we batch in _on_settings_saved
-        pass
+        print("Settings saved and applied!")
     
     def _on_quit(self):
         """Handle quit from tray."""
+        print("Quit requested, shutting down...")
         self.shutdown()
-        sys.exit(0)
+        import os
+        os._exit(0)
     
     def _toggle_recording(self):
         """Toggle recording state (called from hotkey)."""
@@ -118,6 +133,10 @@ class VoiceTypeApp:
         self._accumulated_audio = []
         self._final_text = ""
         self._stop_transcription.clear()
+        
+        # Update tray icon state
+        if self.tray:
+            self.tray.set_recording(True)
         
         # Update window name
         window_name = self.window_info.get_active_window_name()
@@ -146,6 +165,10 @@ class VoiceTypeApp:
         """Stop recording and finalize transcription."""
         self._is_recording = False
         self._stop_transcription.set()
+        
+        # Update tray icon state
+        if self.tray:
+            self.tray.set_recording(False)
         
         # Stop audio capture
         self.audio.stop()
@@ -206,6 +229,12 @@ class VoiceTypeApp:
             if chunk is not None:
                 self._accumulated_audio.append(chunk)
                 
+                # Calculate audio level for voice-reactive overlay
+                rms = self.audio.calculate_rms(chunk)
+                # Normalize RMS to 0-1 range (typical speech is 0.01-0.3)
+                audio_level = min(1.0, rms * 5.0)
+                self.overlay.set_audio_level(audio_level)
+                
                 # Check if it's speech
                 if not self.audio.is_silence(chunk):
                     self._last_speech_time = time.time()
@@ -224,9 +253,10 @@ class VoiceTypeApp:
                         self._final_text = result.text
                         self.overlay.set_transcription(result.text)
             
-            # Auto-stop after silence
+            # Auto-stop after silence (use settings value)
+            silence_timeout = self.settings.silence_duration
             silence_duration = current_time - self._last_speech_time
-            if silence_duration > config.SILENCE_DURATION and self._accumulated_audio:
+            if silence_duration > silence_timeout and self._accumulated_audio:
                 # Check if we have any transcribed text
                 if self._final_text.strip():
                     print(f"Auto-stopping after {silence_duration:.1f}s silence")

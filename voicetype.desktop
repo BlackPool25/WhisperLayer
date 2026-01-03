@@ -1,10 +1,13 @@
 [Desktop Entry]
 Name=VoiceType
-Comment=Speech-to-Text Voice Typing
-Exec=sg input -c "/home/lightdesk/Projects/STT/.venv/bin/python -m voicetype"
+GenericName=Voice Typing
+Comment=Linux Native Speech-to-Text Voice Typing with Whisper AI
+Exec=/home/lightdesk/Projects/STT/.venv/bin/python -m voicetype
 Icon=audio-input-microphone
 Terminal=false
 Type=Application
-Categories=Utility;Accessibility;
-Keywords=voice;speech;transcription;typing;stt;
-StartupNotify=false
+Categories=Utility;Accessibility;Audio;
+Keywords=voice;speech;transcription;typing;stt;whisper;
+StartupNotify=true
+StartupWMClass=voicetype
+Path=/home/lightdesk/Projects/STT

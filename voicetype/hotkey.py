@@ -185,14 +185,19 @@ class EvdevHotkeyManager:
                 self.on_toggle()
         
         self._pynput_listener = keyboard.GlobalHotKeys({
-            config.HOTKEY: handle_hotkey
+            self._hotkey_str: handle_hotkey
         })
         self._pynput_listener.start()
-        print(f"Hotkey registered (pynput fallback): {config.HOTKEY}")
+        print(f"Hotkey registered (pynput fallback): {self._hotkey_str}")
     
     def stop(self):
         """Stop listening for hotkeys."""
         self._stop_event.set()
+        if self._keyboard_device:
+            try:
+                self._keyboard_device.close()
+            except Exception:
+                pass
         if hasattr(self, '_pynput_listener'):
             self._pynput_listener.stop()
     

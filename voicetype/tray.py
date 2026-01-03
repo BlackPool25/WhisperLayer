@@ -13,6 +13,9 @@ if HAS_APPINDICATOR:
     from gi.repository import AppIndicator3
 
 import threading
+import os
+import signal
+import sys
 from typing import Callable, Optional
 from pathlib import Path
 
@@ -36,13 +39,14 @@ class SystemTray:
         self._toggle_item = None
         self._gtk_thread: Optional[threading.Thread] = None
         self._running = False
+        self._main_context = None
     
     def _create_menu(self) -> Gtk.Menu:
         """Create the tray menu."""
         menu = Gtk.Menu()
         
-        # Toggle recording
-        self._toggle_item = Gtk.MenuItem(label="Start Recording")
+        # Toggle recording - most prominent action
+        self._toggle_item = Gtk.MenuItem(label="🎤 Start Recording")
         self._toggle_item.connect("activate", self._on_toggle_clicked)
         menu.append(self._toggle_item)
         
@@ -50,20 +54,20 @@ class SystemTray:
         menu.append(Gtk.SeparatorMenuItem())
         
         # Settings
-        settings_item = Gtk.MenuItem(label="Settings...")
+        settings_item = Gtk.MenuItem(label="⚙️ Settings")
         settings_item.connect("activate", self._on_settings_clicked)
         menu.append(settings_item)
+        
+        # About
+        about_item = Gtk.MenuItem(label="ℹ️ About")
+        about_item.connect("activate", self._on_about_clicked)
+        menu.append(about_item)
         
         # Separator
         menu.append(Gtk.SeparatorMenuItem())
         
-        # About
-        about_item = Gtk.MenuItem(label="About")
-        about_item.connect("activate", self._on_about_clicked)
-        menu.append(about_item)
-        
-        # Quit
-        quit_item = Gtk.MenuItem(label="Quit")
+        # Quit - clear and at the bottom
+        quit_item = Gtk.MenuItem(label="❌ Quit VoiceType")
         quit_item.connect("activate", self._on_quit_clicked)
         menu.append(quit_item)
         
@@ -72,35 +76,54 @@ class SystemTray:
     
     def _on_toggle_clicked(self, widget):
         """Handle toggle menu item click."""
+        print("Tray: Toggle recording clicked")
         if self.on_toggle:
-            self.on_toggle()
+            # Run in main thread to avoid GTK threading issues
+            threading.Thread(target=self.on_toggle, daemon=True).start()
     
     def _on_settings_clicked(self, widget):
         """Handle settings menu item click."""
+        print("Tray: Settings clicked")
         if self.on_settings:
-            self.on_settings()
+            GLib.idle_add(self.on_settings)
     
     def _on_about_clicked(self, widget):
         """Show about dialog."""
-        dialog = Gtk.MessageDialog(
-            message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK,
-            text="VoiceType"
-        )
-        dialog.format_secondary_text(
-            "Linux Native Speech-to-Text Voice Typing\n\n"
-            "Press your hotkey to start/stop recording.\n"
-            "Transcribed text will be typed automatically."
-        )
-        dialog.run()
-        dialog.destroy()
+        def show_dialog():
+            dialog = Gtk.MessageDialog(
+                message_type=Gtk.MessageType.INFO,
+                buttons=Gtk.ButtonsType.OK,
+                text="VoiceType"
+            )
+            dialog.format_secondary_text(
+                "Linux Native Speech-to-Text Voice Typing\n\n"
+                "Press your hotkey to start/stop recording.\n"
+                "Transcribed text will be typed automatically.\n\n"
+                "Version 1.0"
+            )
+            dialog.run()
+            dialog.destroy()
+        GLib.idle_add(show_dialog)
     
     def _on_quit_clicked(self, widget):
         """Handle quit menu item click."""
+        print("Tray: Quit clicked - shutting down...")
         self._running = False
+        
+        # Call quit handler first
         if self.on_quit:
-            self.on_quit()
-        Gtk.main_quit()
+            try:
+                self.on_quit()
+            except Exception as e:
+                print(f"Error in quit handler: {e}")
+        
+        # Force exit the process
+        def force_quit():
+            print("Forcing application exit...")
+            Gtk.main_quit()
+            os._exit(0)
+        
+        GLib.timeout_add(100, force_quit)
     
     def set_recording(self, is_recording: bool):
         """Update recording state."""
@@ -108,12 +131,14 @@ class SystemTray:
         
         def update():
             if self._toggle_item:
-                self._toggle_item.set_label(
-                    "Stop Recording" if is_recording else "Start Recording"
-                )
+                if is_recording:
+                    self._toggle_item.set_label("⏹️ Stop Recording")
+                else:
+                    self._toggle_item.set_label("🎤 Start Recording")
             if self._indicator and HAS_APPINDICATOR:
-                # Could update icon here for recording state
-                pass
+                # Update icon for recording state
+                icon = "audio-input-microphone" if not is_recording else "media-record"
+                self._indicator.set_icon(icon)
         
         GLib.idle_add(update)
     

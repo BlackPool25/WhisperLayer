@@ -1,6 +1,16 @@
 # Core dependencies
-faster-whisper>=1.0.0
+openai-whisper>=20231117
 sounddevice>=0.4.6
 numpy>=1.24.0
 pynput>=1.7.6
 PyGObject>=3.44.0
+torch>=2.0.0
+
+# Audio device enumeration
+pulsectl>=23.5.0
+
+# For evdev hotkeys on Wayland
+evdev>=1.6.0
+
+# PyQt5 for modern overlay
+PyQt5>=5.15.0
