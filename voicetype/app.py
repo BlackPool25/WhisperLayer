@@ -25,7 +25,7 @@ class VoiceTypeApp:
         
         self.audio = AudioCapture()
         self.transcriber = Transcriber(on_transcription=self._on_transcription)
-        self.overlay = OverlayController()
+        self.overlay = OverlayController(on_cancel=self._on_overlay_cancel)
         self.injector = TextInjector()
         self.window_info = WindowInfo()
         self.hotkey = HotkeyManager(on_toggle=self._toggle_recording)
@@ -94,13 +94,37 @@ class VoiceTypeApp:
     def _show_settings(self):
         """Show settings window."""
         from .settings_ui import SettingsWindow
+        
+        # Callbacks to pause/resume hotkey listener during capture
+        def on_capture_start():
+            print("Pausing hotkey listener for capture...")
+            if self.hotkey:
+                self.hotkey.stop()
+        
+        def on_capture_end():
+            print("Resuming hotkey listener...")
+            # Reload settings to get new hotkey
+            settings = get_settings()
+            self.hotkey = HotkeyManager(on_toggle=self._toggle_recording, hotkey=settings.hotkey)
+            self.hotkey.start()
+            
         if self._settings_window:
             try:
                 self._settings_window.destroy()
             except:
                 pass
-        self._settings_window = SettingsWindow(on_save=self._on_settings_saved)
-        self._settings_window.show_all()
+                
+        try:
+            self._settings_window = SettingsWindow(
+                on_save=self._on_settings_saved,
+                on_capture_start=on_capture_start,
+                on_capture_end=on_capture_end
+            )
+            self._settings_window.show_all()
+        except Exception as e:
+            print(f"Error creating settings window: {e}")
+            if self.tray:
+                self.tray.show_notification("Error", f"Could not open settings: {e}")
     
     def _on_settings_saved(self):
         """Handle settings save - settings are now hot-reloaded via callbacks."""
@@ -127,6 +151,15 @@ class VoiceTypeApp:
             else:
                 self._start_recording()
     
+    def _on_overlay_cancel(self):
+        """Handle cancel button click from overlay."""
+        print("Cancel clicked - stopping and hiding...")
+        with self._recording_lock:
+            if self._is_recording:
+                self._stop_recording()
+        # Always hide overlay when cancel is clicked
+        self.overlay.hide()
+    
     def _start_recording(self):
         """Start recording and transcription."""
         self._is_recording = True
@@ -142,10 +175,15 @@ class VoiceTypeApp:
         window_name = self.window_info.get_active_window_name()
         self.overlay.set_window_name(window_name)
         
-        # Show overlay and update status
-        self.overlay.show()
+        # DON'T show overlay during recording - prevents focus stealing
+        # Just use tray icon indicator instead
+        # Overlay will appear at the end with results
         self.overlay.set_recording(True)
-        self.overlay.set_transcription("Listening...")
+        self.overlay.set_transcription("")
+        
+        # Initialize streaming transcription state
+        self._confirmed_text = ""  # Text that is finalized
+        self._pending_text = ""    # Current sliding window transcription
         
         # Start audio capture
         self.audio.clear_buffer()
@@ -159,7 +197,8 @@ class VoiceTypeApp:
         self._transcription_thread.start()
         
         self._last_speech_time = time.time()
-        print("Recording started")
+        self._last_confirm_time = time.time()
+        print("Recording started (tray icon shows status)")
     
     def _stop_recording(self):
         """Stop recording and finalize transcription."""
@@ -181,20 +220,27 @@ class VoiceTypeApp:
         if self._transcription_thread and self._transcription_thread.is_alive():
             self._transcription_thread.join(timeout=2.0)
         
-        # Do final transcription of accumulated audio
-        if self._accumulated_audio:
+        # Combine confirmed text + any pending text for final result
+        final_text = (self._confirmed_text + " " + self._pending_text).strip()
+        
+        # If we have significant pending audio, do one final transcription
+        if self._accumulated_audio and not final_text:
             full_audio = np.concatenate(self._accumulated_audio)
-            if len(full_audio) > config.SAMPLE_RATE * 0.3:  # At least 300ms
+            if len(full_audio) > config.SAMPLE_RATE * 0.3:
                 result = self.transcriber.transcribe(full_audio)
-                print(f"Final transcription: '{result.text}'")
                 if result.text:
-                    self._final_text = result.text
+                    final_text = result.text.strip()
+        
+        self._final_text = final_text
+        print(f"Final text: '{self._final_text}'")
         
         # Type the final text
         if self._final_text.strip():
-            self.overlay.set_status("Typing...")
+            # Brief overlay showing final result
             self.overlay.set_transcription(self._final_text)
-            time.sleep(0.2)  # Brief pause before typing
+            self.overlay.set_status("Typing...")
+            self.overlay.show()  # Only show now, after recording done
+            time.sleep(0.3)
             
             print(f"Typing text: '{self._final_text}'")
             success = self.injector.type_text(self._final_text)
@@ -206,10 +252,11 @@ class VoiceTypeApp:
         else:
             self.overlay.set_transcription("(No speech detected)")
             self.overlay.set_status("Done")
+            self.overlay.show()
         
-        # Hide overlay after a delay
+        # Hide overlay after a short delay
         def hide_later():
-            time.sleep(1.5)
+            time.sleep(1.0)
             self.overlay.hide()
         
         threading.Thread(target=hide_later, daemon=True).start()
@@ -231,46 +278,72 @@ class VoiceTypeApp:
                 
                 # Calculate audio level for voice-reactive overlay
                 rms = self.audio.calculate_rms(chunk)
-                # Normalize RMS to 0-1 range (typical speech is 0.01-0.3)
-                audio_level = min(1.0, rms * 5.0)
+                # Normalize RMS to 0-1 range - boost significantly for visible waves
+                audio_level = min(1.0, rms * 15.0)  # Increased from 5x to 15x
+                if audio_level > 0.1:  # Only log significant audio
+                    print(f"Audio level: {audio_level:.2f}")
                 self.overlay.set_audio_level(audio_level)
                 
                 # Check if it's speech
                 if not self.audio.is_silence(chunk):
                     self._last_speech_time = time.time()
             
-            # Process periodically for live updates
+            # Process periodically for live updates - SLIDING WINDOW for speed
             current_time = time.time()
             if current_time - last_process_time >= chunk_interval and self._accumulated_audio:
                 last_process_time = current_time
                 
-                # Transcribe accumulated audio for live preview
+                # --- SLIDING WINDOW TRANSCRIPTION ---
+                # Only transcribe last ~5 seconds for constant speed
+                window_samples = config.SAMPLE_RATE * 5  # 5 seconds
                 full_audio = np.concatenate(self._accumulated_audio)
-                if len(full_audio) > config.SAMPLE_RATE * 0.5:  # At least 500ms
-                    result = self.transcriber.transcribe(full_audio)
+                
+                if len(full_audio) > window_samples:
+                    # Use sliding window - last 5 seconds only
+                    window_audio = full_audio[-window_samples:]
+                else:
+                    window_audio = full_audio
+                
+                if len(window_audio) > config.SAMPLE_RATE * 0.5:  # At least 500ms
+                    result = self.transcriber.transcribe(window_audio)
                     if result.text:
-                        print(f"Live transcription: '{result.text}'")
-                        self._final_text = result.text
-                        self.overlay.set_transcription(result.text)
+                        self._pending_text = result.text.strip()
+                        # Combine confirmed + pending for display
+                        display_text = (self._confirmed_text + " " + self._pending_text).strip()
+                        print(f"Streaming: '{display_text}'")
+                        self._final_text = display_text
+                
+                # Periodically confirm text (every ~3 seconds of audio)
+                # This moves pending text to confirmed
+                if current_time - self._last_confirm_time > 3.0 and self._pending_text:
+                    self._confirmed_text = (self._confirmed_text + " " + self._pending_text).strip()
+                    self._pending_text = ""
+                    self._last_confirm_time = current_time
+                    # Clear old audio, keep last 1 second for continuity
+                    keep_samples = config.SAMPLE_RATE * 1
+                    if len(full_audio) > keep_samples:
+                        self._accumulated_audio = [full_audio[-keep_samples:]]
             
             # Auto-stop after silence (use settings value)
             silence_timeout = self.settings.silence_duration
             silence_duration = current_time - self._last_speech_time
-            if silence_duration > silence_timeout and self._accumulated_audio:
-                # Check if we have any transcribed text
-                if self._final_text.strip():
-                    print(f"Auto-stopping after {silence_duration:.1f}s silence")
-                    self._stop_transcription.set()
-                    # Trigger stop from main context
-                    with self._recording_lock:
-                        if self._is_recording:
-                            self._is_recording = False
-                            threading.Thread(target=self._finalize_recording, daemon=True).start()
+            if silence_duration > silence_timeout:
+                print(f"Auto-stopping after {silence_duration:.1f}s silence")
+                self._stop_transcription.set()
+                # Trigger stop from main context
+                with self._recording_lock:
+                    if self._is_recording:
+                        self._is_recording = False
+                        threading.Thread(target=self._finalize_recording, daemon=True).start()
     
     def _finalize_recording(self):
         """Finalize recording after auto-stop."""
         # Stop audio capture
         self.audio.stop()
+        
+        # Update tray icon state
+        if self.tray:
+            self.tray.set_recording(False)
         
         # Update overlay
         self.overlay.set_recording(False)

@@ -7,150 +7,160 @@ from gi.repository import Gtk, Gdk, GLib
 from .settings import get_settings, AVAILABLE_MODELS, AVAILABLE_MODEL_NAMES, DEVICE_OPTIONS, get_input_devices
 
 
-# Modern dark theme CSS - minimal and clean
+# Modern Light Theme - Clean, Spacious, Professional
 SETTINGS_CSS = """
 window {
-    background-color: #1e1e24;
+    background-color: #f5f6f7;
+    font-family: 'Inter', 'Segoe UI', sans-serif;
 }
 
 .header-bar {
-    background: linear-gradient(180deg, #2a2a35, #252530);
-    border-bottom: 1px solid #3a3a45;
-    padding: 12px 16px;
+    background-color: #ffffff;
+    border-bottom: 1px solid #e1e4e8;
+    padding: 16px 24px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
 }
 
 .title-label {
-    font-size: 18px;
-    font-weight: bold;
-    color: #ffffff;
+    font-size: 20px;
+    font-weight: 600;
+    color: #1a1f36;
 }
 
 .save-button {
-    background: linear-gradient(180deg, #2e8b57, #228b22);
+    background: #4f46e5;
     border: none;
-    border-radius: 6px;
-    padding: 8px 20px;
+    border-radius: 8px;
+    padding: 8px 16px;
     color: white;
-    font-weight: bold;
-    min-width: 80px;
+    font-weight: 600;
+    transition: all 0.2s;
 }
 
 .save-button:hover {
-    background: linear-gradient(180deg, #3cb371, #2e8b57);
+    background: #4338ca;
+    box-shadow: 0 4px 6px rgba(79, 70, 229, 0.2);
 }
 
 .section-box {
-    background-color: #252530;
-    border-radius: 10px;
-    padding: 16px;
-    margin: 6px 16px;
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 20px;
+    margin: 8px 24px;
 }
 
 .section-title {
-    font-size: 12px;
-    font-weight: bold;
-    color: #7799dd;
-    margin-bottom: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #6b7280;
+    margin-bottom: 12px;
 }
 
 .setting-label {
-    font-size: 13px;
-    color: #e0e0e0;
+    font-size: 14px;
+    color: #374151;
+    font-weight: 500;
 }
 
 .setting-desc {
-    font-size: 10px;
-    color: #808090;
+    font-size: 12px;
+    color: #6b7280;
 }
 
-combobox, combobox button, combobox cellview {
-    background-color: #333340;
-    border: 1px solid #444455;
+combobox {
+    background-color: #f9fafb;
+    border: 1px solid #d1d5db;
     border-radius: 6px;
-    color: #e0e0e0;
-    min-height: 34px;
-    padding: 4px 8px;
+    color: #374151;
+    padding: 6px;
+    min-height: 36px;
 }
 
-combobox:focus, combobox button:focus {
-    border-color: #5577cc;
-}
-
-scale {
-    min-height: 30px;
+combobox:focus {
+    border-color: #6366f1;
+    background-color: #ffffff;
 }
 
 scale trough {
-    background-color: #333340;
-    border-radius: 3px;
+    background-color: #e5e7eb;
+    border-radius: 4px;
     min-height: 6px;
 }
 
 scale highlight {
-    background: linear-gradient(90deg, #4477cc, #6655bb);
-    border-radius: 3px;
+    background: #4f46e5;
+    border-radius: 4px;
 }
 
 scale slider {
     background-color: #ffffff;
+    border: 1px solid #d1d5db;
     border-radius: 50%;
-    min-width: 16px;
-    min-height: 16px;
+    min-width: 20px;
+    min-height: 20px;
+    margin: -7px 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 checkbutton {
-    color: #e0e0e0;
+    color: #374151;
+    font-weight: 500;
 }
 
 checkbutton check {
-    background-color: #333340;
-    border: 2px solid #555566;
+    background-color: #ffffff;
+    border: 1px solid #d1d5db;
     border-radius: 4px;
     min-width: 18px;
     min-height: 18px;
 }
 
 checkbutton:checked check {
-    background: linear-gradient(135deg, #4477cc, #6655bb);
-    border-color: #5588dd;
+    background-color: #4f46e5;
+    border-color: #4f46e5;
+    color: white;
 }
 
 .hotkey-entry {
-    background-color: #333340;
-    border: 1px solid #444455;
+    background-color: #f3f4f6;
+    border: 1px solid #d1d5db;
     border-radius: 6px;
     padding: 8px 12px;
-    font-family: monospace;
-    font-size: 12px;
-    color: #99bbff;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: #1f2937;
+    font-weight: 600;
     min-width: 140px;
 }
 
 .hotkey-button {
-    background-color: #3a3a48;
-    border: 1px solid #505060;
+    background-color: #ffffff;
+    border: 1px solid #d1d5db;
     border-radius: 6px;
-    padding: 8px 14px;
-    color: #c0c0d0;
+    padding: 8px 16px;
+    color: #4b5563;
+    font-weight: 500;
 }
 
 .hotkey-button:hover {
-    background-color: #454555;
-    border-color: #6677aa;
+    background-color: #f9fafb;
+    border-color: #9ca3af;
+    color: #1f2937;
 }
 
 .refresh-btn {
-    background-color: transparent;
-    border: 1px solid #444455;
+    background: transparent;
+    border: 1px solid #e5e7eb;
     border-radius: 6px;
-    padding: 4px 10px;
-    color: #a0a0b0;
-    min-width: 30px;
+    color: #6b7280;
+    padding: 6px 10px;
 }
 
 .refresh-btn:hover {
-    background-color: #333340;
-    border-color: #6677aa;
+    background-color: #f3f4f6;
+    color: #4f46e5;
+    border-color: #d1d5db;
 }
 """
 
@@ -169,10 +179,12 @@ class NoScrollComboBox(Gtk.ComboBoxText):
 class SettingsWindow(Gtk.Window):
     """Simplified GTK3 Settings window for VoiceType."""
     
-    def __init__(self, on_save=None, on_close=None):
+    def __init__(self, on_save=None, on_close=None, on_capture_start=None, on_capture_end=None):
         super().__init__(title="VoiceType Settings")
         self.on_save = on_save
         self.on_close_callback = on_close
+        self.on_capture_start = on_capture_start
+        self.on_capture_end = on_capture_end
         
         self.settings = get_settings()
         self._capturing_hotkey = False
@@ -180,7 +192,7 @@ class SettingsWindow(Gtk.Window):
         self._current_hotkey = self.settings.hotkey
         self._input_devices = []
         
-        self.set_default_size(440, 520)
+        self.set_default_size(500, 600)  # Slightly larger for comfort
         self.set_border_width(0)
         self.set_position(Gtk.WindowPosition.CENTER)
         self.set_resizable(True)
@@ -409,6 +421,10 @@ class SettingsWindow(Gtk.Window):
         if self._capturing_hotkey:
             return
         
+        # Pause global listener
+        if self.on_capture_start:
+            self.on_capture_start()
+            
         self._capturing_hotkey = True
         self.hotkey_button.set_label("Press keys...")
         self.hotkey_label.set_text("...")
@@ -441,14 +457,24 @@ class SettingsWindow(Gtk.Window):
             else:
                 main_key = key
         
-        if modifiers and main_key:
-            hotkey = '+'.join(sorted(set(modifiers))) + '+' + main_key
+        # Only finish if we have a main key (modifiers only don't count)
+        if main_key:
+            if modifiers:
+                hotkey = '+'.join(sorted(set(modifiers))) + '+' + main_key
+            else:
+                hotkey = main_key
+                
             self._current_hotkey = hotkey
             self.hotkey_label.set_text(hotkey)
-        
-        self._capturing_hotkey = False
-        self.hotkey_button.set_label("Change...")
-        self._pressed_keys.clear()
+            
+            self._capturing_hotkey = False
+            self.hotkey_button.set_label("Change...")
+            self._pressed_keys.clear()
+            
+            # Resume global listener
+            if self.on_capture_end:
+                self.on_capture_end()
+                
         return True
     
     def _on_save(self, button):
