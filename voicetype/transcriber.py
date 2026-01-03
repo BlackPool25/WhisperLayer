@@ -42,10 +42,20 @@ class Transcriber:
         # Track last transcription to avoid duplicates
         self._last_text = ""
         
-        # Detect device
-        if torch.cuda.is_available():
-            self.device = "cuda"
-            self.device_name = torch.cuda.get_device_name(0)
+        # Detect device based on settings
+        from .settings import get_settings
+        device_setting = get_settings().device
+        
+        if device_setting == "cpu":
+            self.device = "cpu"
+            self.device_name = "CPU (forced)"
+        elif device_setting == "cuda" or (device_setting == "auto" and torch.cuda.is_available()):
+            if torch.cuda.is_available():
+                self.device = "cuda"
+                self.device_name = torch.cuda.get_device_name(0)
+            else:
+                self.device = "cpu"
+                self.device_name = "CPU (GPU not available)"
         else:
             self.device = "cpu"
             self.device_name = "CPU"
@@ -54,18 +64,21 @@ class Transcriber:
         """Load the Whisper model. Should be called before transcription."""
         if self._is_loaded:
             return
+        
+        from .settings import get_settings
+        model_name = get_settings().model
             
         with self._model_lock:
             if self._is_loaded:
                 return
                 
-            print(f"Loading Whisper model: {config.WHISPER_MODEL}...")
+            print(f"Loading Whisper model: {model_name}...")
             print(f"Device: {self.device} ({self.device_name})")
             
             import whisper
             
             self.model = whisper.load_model(
-                config.WHISPER_MODEL,
+                model_name,
                 device=self.device
             )
             self._is_loaded = True

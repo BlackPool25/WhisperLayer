@@ -19,14 +19,16 @@ class EvdevHotkeyManager:
     Reads directly from /dev/input/event* devices.
     """
     
-    def __init__(self, on_toggle: Optional[Callable[[], None]] = None):
+    def __init__(self, on_toggle: Optional[Callable[[], None]] = None, hotkey: Optional[str] = None):
         self.on_toggle = on_toggle
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._keyboard_device = None
         
-        # Parse the hotkey string to get modifier keys and main key
-        self._modifiers, self._main_key = self._parse_hotkey(config.HOTKEY)
+        # Use provided hotkey or get from settings
+        from .settings import get_settings
+        self._hotkey_str = hotkey or get_settings().hotkey
+        self._modifiers, self._main_key = self._parse_hotkey(self._hotkey_str)
     
     def _parse_hotkey(self, hotkey_str: str) -> tuple[set[str], str]:
         """Parse hotkey string like '<ctrl>+<alt>+f' into modifiers and key."""
@@ -99,8 +101,6 @@ class EvdevHotkeyManager:
         self._thread = threading.Thread(target=self._evdev_loop, daemon=True)
         self._thread.start()
         print(f"Global hotkey registered (evdev): {config.HOTKEY}")
-        print(f"  Keyboard: {self._keyboard_device.name}")
-        print(f"  Looking for: modifiers={self._modifiers}, key='{self._main_key}'")
     
     def _evdev_loop(self):
         """Main loop reading keyboard events from evdev."""
@@ -171,9 +171,7 @@ class EvdevHotkeyManager:
                 
                 # Check for hotkey press
                 if event.code == target_key and event.value == 1:  # key down
-                    print(f"Target key pressed! Active modifiers: {active_modifiers}, Required: {self._modifiers}")
                     if active_modifiers == self._modifiers:
-                        print("HOTKEY TRIGGERED!")
                         if self.on_toggle:
                             self.on_toggle()
                             
@@ -209,14 +207,15 @@ class EvdevHotkeyManager:
 class HotkeyManager:
     """Manages global hotkey detection - uses evdev on Wayland, pynput otherwise."""
     
-    def __init__(self, on_toggle: Optional[Callable[[], None]] = None):
+    def __init__(self, on_toggle: Optional[Callable[[], None]] = None, hotkey: Optional[str] = None):
         self.on_toggle = on_toggle
+        self.hotkey = hotkey
         
         # Use evdev on Wayland for true global hotkeys
         if is_wayland():
-            self._impl = EvdevHotkeyManager(on_toggle=on_toggle)
+            self._impl = EvdevHotkeyManager(on_toggle=on_toggle, hotkey=hotkey)
         else:
-            self._impl = PynputHotkeyManager(on_toggle=on_toggle)
+            self._impl = PynputHotkeyManager(on_toggle=on_toggle, hotkey=hotkey)
     
     def start(self):
         """Start listening for hotkeys."""
@@ -234,10 +233,14 @@ class HotkeyManager:
 class PynputHotkeyManager:
     """Hotkey manager using pynput (for X11)."""
     
-    def __init__(self, on_toggle: Optional[Callable[[], None]] = None):
+    def __init__(self, on_toggle: Optional[Callable[[], None]] = None, hotkey: Optional[str] = None):
         self.on_toggle = on_toggle
         self._listener: Optional[keyboard.GlobalHotKeys] = None
         self._is_running = False
+        
+        # Use provided hotkey or get from settings
+        from .settings import get_settings
+        self._hotkey_str = hotkey or get_settings().hotkey
     
     def start(self):
         """Start listening for hotkeys."""
@@ -251,10 +254,10 @@ class PynputHotkeyManager:
                 self.on_toggle()
         
         self._listener = keyboard.GlobalHotKeys({
-            config.HOTKEY: handle_hotkey
+            self._hotkey_str: handle_hotkey
         })
         self._listener.start()
-        print(f"Hotkey registered: {config.HOTKEY}")
+        print(f"Hotkey registered: {self._hotkey_str}")
     
     def stop(self):
         """Stop listening for hotkeys."""

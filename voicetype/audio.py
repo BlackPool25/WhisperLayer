@@ -12,16 +12,21 @@ from . import config
 class AudioCapture:
     """Captures audio from microphone with streaming support."""
     
-    def __init__(self, on_audio_chunk: Optional[Callable[[np.ndarray], None]] = None):
+    def __init__(self, on_audio_chunk: Optional[Callable[[np.ndarray], None]] = None, device: Optional[int] = None):
         """
         Initialize audio capture.
         
         Args:
             on_audio_chunk: Callback function called with each audio chunk
+            device: Audio device ID (None = default device)
         """
         self.sample_rate = config.SAMPLE_RATE
         self.chunk_samples = int(config.CHUNK_DURATION * self.sample_rate)
         self.buffer_samples = int(config.BUFFER_DURATION * self.sample_rate)
+        
+        # Get device from settings if not provided
+        from .settings import get_settings
+        self.device = device if device is not None else get_settings().input_device
         
         self.on_audio_chunk = on_audio_chunk
         self.audio_queue: queue.Queue[np.ndarray] = queue.Queue()
@@ -63,7 +68,8 @@ class AudioCapture:
             samplerate=self.sample_rate,
             channels=1,
             dtype=np.float32,
-            blocksize=self.chunk_samples
+            blocksize=self.chunk_samples,
+            device=self.device  # Use selected device
         )
         self.stream.start()
         

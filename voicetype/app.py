@@ -13,18 +13,30 @@ from .transcriber import Transcriber, TranscriptionResult
 from .overlay import OverlayController
 from .system import TextInjector, WindowInfo
 from .hotkey import HotkeyManager
+from .tray import SystemTray
+from .settings import get_settings
 
 
 class VoiceTypeApp:
     """Main application controller for VoiceType."""
     
-    def __init__(self):
+    def __init__(self, use_tray: bool = True):
         self.audio = AudioCapture()
         self.transcriber = Transcriber(on_transcription=self._on_transcription)
         self.overlay = OverlayController()
         self.injector = TextInjector()
         self.window_info = WindowInfo()
         self.hotkey = HotkeyManager(on_toggle=self._toggle_recording)
+        
+        # System tray
+        self.use_tray = use_tray
+        self.tray = SystemTray(
+            on_toggle=self._toggle_recording,
+            on_settings=self._show_settings,
+            on_quit=self._on_quit
+        ) if use_tray else None
+        
+        self._settings_window = None
         
         self._is_recording = False
         self._recording_lock = threading.Lock()
@@ -35,6 +47,62 @@ class VoiceTypeApp:
         
         # Final text to type after recording stops
         self._final_text = ""
+        
+        # Register for settings changes
+        get_settings().add_callback(self._on_settings_change)
+    
+    def _show_settings(self):
+        """Show settings window."""
+        from .settings_ui import SettingsWindow
+        if self._settings_window is None:
+            self._settings_window = SettingsWindow(on_save=self._on_settings_saved)
+        self._settings_window.show_all()
+    
+    def _on_settings_saved(self):
+        """Handle settings save - hot-reload components."""
+        old_hotkey = config.HOTKEY
+        old_model = config.WHISPER_MODEL
+        
+        # Reload config values
+        config.reload_settings()
+        
+        # Check what changed and reload components
+        settings = get_settings()
+        
+        # Hotkey changed - restart hotkey listener
+        if settings.hotkey != old_hotkey:
+            print(f"Reloading hotkey: {old_hotkey} -> {settings.hotkey}")
+            self.hotkey.stop()
+            self.hotkey = HotkeyManager(on_toggle=self._toggle_recording, hotkey=settings.hotkey)
+            self.hotkey.start()
+        
+        # Model changed - reload transcriber
+        if settings.model != old_model:
+            print(f"Reloading model: {settings.model}")
+            self.transcriber._is_loaded = False
+            self.transcriber.model = None
+            # Model will be reloaded on next transcription
+            if self.tray:
+                self.tray.show_notification("VoiceType", f"Model will reload: {settings.model}")
+        
+        # Audio device changed - update audio capture
+        if hasattr(self.audio, 'device'):
+            self.audio.device = settings.input_device
+        
+        if self.tray:
+            self.tray.show_notification("VoiceType", "Settings applied!")
+        
+        print("Settings reloaded successfully!")
+    
+    def _on_settings_change(self, key, value):
+        """Handle individual setting changes (called per-setting)."""
+        # This is called for each setting change, but we batch in _on_settings_saved
+        pass
+    
+    def _on_quit(self):
+        """Handle quit from tray."""
+        self.shutdown()
+        sys.exit(0)
     
     def _toggle_recording(self):
         """Toggle recording state (called from hotkey)."""
@@ -220,6 +288,10 @@ class VoiceTypeApp:
         
         # Start overlay (runs GTK in background thread)
         self.overlay.start()
+        
+        # Start system tray if enabled
+        if self.tray:
+            self.tray.start()
         
         # Start hotkey listener
         self.hotkey.start()

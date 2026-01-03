@@ -1,0 +1,14 @@
+[Unit]
+Description=VoiceType Speech-to-Text
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sg input -c "%h/Projects/STT/.venv/bin/python -m voicetype"
+Restart=on-failure
+RestartSec=5
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=default.target
