@@ -1,4 +1,4 @@
-"""System tray integration for VoiceType using GTK3 AppIndicator."""
+"""System tray integration for WhisperLayer using GTK3 AppIndicator."""
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -67,7 +67,7 @@ class SystemTray:
         menu.append(Gtk.SeparatorMenuItem())
         
         # Quit - clear and at the bottom
-        quit_item = Gtk.MenuItem(label="❌ Quit VoiceType")
+        quit_item = Gtk.MenuItem(label="❌ Quit WhisperLayer")
         quit_item.connect("activate", self._on_quit_clicked)
         menu.append(quit_item)
         
@@ -93,7 +93,7 @@ class SystemTray:
             dialog = Gtk.MessageDialog(
                 message_type=Gtk.MessageType.INFO,
                 buttons=Gtk.ButtonsType.OK,
-                text="VoiceType"
+                text="WhisperLayer"
             )
             dialog.format_secondary_text(
                 "Linux Native Speech-to-Text Voice Typing\n\n"
@@ -156,7 +156,7 @@ class SystemTray:
         """Run GTK main loop in background thread."""
         # Create indicator
         self._indicator = AppIndicator3.Indicator.new(
-            "voicetype",
+            "whisperlayer",
             "audio-input-microphone",
             AppIndicator3.IndicatorCategory.APPLICATION_STATUS
         )

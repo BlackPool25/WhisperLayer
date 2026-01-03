@@ -1,4 +1,4 @@
-"""Main application entry point for VoiceType."""
+"""Main application entry point for WhisperLayer."""
 
 import signal
 import sys
@@ -17,8 +17,8 @@ from .tray import SystemTray
 from .settings import get_settings
 
 
-class VoiceTypeApp:
-    """Main application controller for VoiceType."""
+class WhisperLayerApp:
+    """Main application controller for WhisperLayer."""
     
     def __init__(self, use_tray: bool = True):
         self.settings = get_settings()
@@ -65,7 +65,7 @@ class VoiceTypeApp:
         self.hotkey = HotkeyManager(on_toggle=self._toggle_recording, hotkey=new_value)
         self.hotkey.start()
         if self.tray:
-            self.tray.show_notification("VoiceType", f"Hotkey updated to {new_value}")
+            self.tray.show_notification("WhisperLayer", f"Hotkey updated to {new_value}")
     
     def _on_model_change(self, new_value, old_value):
         """Handle model change - mark for reload."""
@@ -73,7 +73,7 @@ class VoiceTypeApp:
         self.transcriber._is_loaded = False
         self.transcriber.model = None
         if self.tray:
-            self.tray.show_notification("VoiceType", f"Model will reload: {new_value}")
+            self.tray.show_notification("WhisperLayer", f"Model will reload: {new_value}")
     
     def _on_device_change(self, new_value, old_value):
         """Handle compute device change."""
@@ -132,7 +132,7 @@ class VoiceTypeApp:
         config.reload_settings()
         
         if self.tray:
-            self.tray.show_notification("VoiceType", "Settings applied!")
+            self.tray.show_notification("WhisperLayer", "Settings applied!")
         
         print("Settings saved and applied!")
     
@@ -375,7 +375,7 @@ class VoiceTypeApp:
     def run(self):
         """Run the application."""
         print("=" * 50)
-        print("VoiceType - Linux Native STT Voice Typing")
+        print("WhisperLayer - Linux Native STT Voice Typing")
         print("=" * 50)
         print(f"Session: {self.window_info.get_session_info()}")
         print(f"Hotkey: {config.HOTKEY}")
@@ -428,7 +428,7 @@ class VoiceTypeApp:
 
 def main():
     """Entry point."""
-    app = VoiceTypeApp()
+    app = WhisperLayerApp()
     app.run()
 
 

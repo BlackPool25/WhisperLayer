@@ -1,4 +1,4 @@
-"""Simplified Settings GUI for VoiceType using GTK3."""
+"""Simplified Settings GUI for WhisperLayer using GTK3."""
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -177,10 +177,10 @@ class NoScrollComboBox(Gtk.ComboBoxText):
 
 
 class SettingsWindow(Gtk.Window):
-    """Simplified GTK3 Settings window for VoiceType."""
+    """Simplified GTK3 Settings window for WhisperLayer."""
     
     def __init__(self, on_save=None, on_close=None, on_capture_start=None, on_capture_end=None):
-        super().__init__(title="VoiceType Settings")
+        super().__init__(title="WhisperLayer Settings")
         self.on_save = on_save
         self.on_close_callback = on_close
         self.on_capture_start = on_capture_start
@@ -346,7 +346,7 @@ class SettingsWindow(Gtk.Window):
         autostart_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         autostart_row.set_margin_top(10)
         
-        self.autostart_check = Gtk.CheckButton(label="Start VoiceType on login")
+        self.autostart_check = Gtk.CheckButton(label="Start WhisperLayer on login")
         autostart_row.pack_start(self.autostart_check, False, False, 0)
         
         behavior_section.pack_start(autostart_row, False, False, 0)

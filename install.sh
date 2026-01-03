@@ -1,15 +1,15 @@
 #!/bin/bash
-# VoiceType Installation Script
+# WhisperLayer Installation Script
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DESKTOP_FILE="$HOME/.local/share/applications/voicetype.desktop"
-SERVICE_FILE="$HOME/.config/systemd/user/voicetype.service"
-AUTOSTART_FILE="$HOME/.config/autostart/voicetype.desktop"
+DESKTOP_FILE="$HOME/.local/share/applications/whisperlayer.desktop"
+SERVICE_FILE="$HOME/.config/systemd/user/whisperlayer.service"
+AUTOSTART_FILE="$HOME/.config/autostart/whisperlayer.desktop"
 
 echo "=========================================="
-echo "VoiceType Installer v1.0.0-beta"
+echo "WhisperLayer Installer v1.0.0-beta"
 echo "=========================================="
 
 # Detect package manager and install system dependencies
@@ -49,6 +49,7 @@ fi
 
 # Install Python dependencies
 echo "Installing Python dependencies..."
+"$SCRIPT_DIR/.venv/bin/pip" install -q -e "$SCRIPT_DIR" 2>/dev/null || \
 "$SCRIPT_DIR/.venv/bin/pip" install -q -r "$SCRIPT_DIR/requirements.txt" 2>/dev/null || true
 
 # Check if user is in input group
@@ -71,20 +72,20 @@ fi
 mkdir -p "$HOME/.local/share/applications"
 mkdir -p "$HOME/.config/systemd/user"
 mkdir -p "$HOME/.config/autostart"
-mkdir -p "$HOME/.config/voicetype"
+mkdir -p "$HOME/.config/whisperlayer"
 
 # Install desktop file
 echo "Installing desktop launcher..."
 cat > "$DESKTOP_FILE" << EOF
 [Desktop Entry]
-Name=VoiceType
+Name=WhisperLayer
 Comment=Speech-to-Text Voice Typing
-Exec=sg input -c "$SCRIPT_DIR/.venv/bin/python -m voicetype"
+Exec=sg input -c "$SCRIPT_DIR/.venv/bin/python -m whisperlayer"
 Icon=audio-input-microphone
 Terminal=false
 Type=Application
 Categories=Utility;Accessibility;
-Keywords=voice;speech;transcription;typing;stt;
+Keywords=voice;speech;transcription;typing;stt;whisper;
 StartupNotify=false
 EOF
 
@@ -92,12 +93,12 @@ EOF
 echo "Installing systemd service..."
 cat > "$SERVICE_FILE" << EOF
 [Unit]
-Description=VoiceType Speech-to-Text
+Description=WhisperLayer Speech-to-Text
 After=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/sg input -c "$SCRIPT_DIR/.venv/bin/python -m voicetype"
+ExecStart=/usr/bin/sg input -c "$SCRIPT_DIR/.venv/bin/python -m whisperlayer"
 Restart=on-failure
 RestartSec=5
 Environment=DISPLAY=:0
@@ -115,13 +116,13 @@ echo "=========================================="
 echo "Installation Complete!"
 echo "=========================================="
 echo ""
-echo "VoiceType is now available in your applications menu."
+echo "WhisperLayer is now available in your applications menu."
 echo ""
 echo "To enable auto-start on login:"
-echo "  systemctl --user enable voicetype"
+echo "  systemctl --user enable whisperlayer"
 echo ""
-echo "To start VoiceType now:"
-echo "  systemctl --user start voicetype"
+echo "To start WhisperLayer now:"
+echo "  systemctl --user start whisperlayer"
 echo ""
 echo "Or launch from your applications menu."
 echo ""
@@ -130,9 +131,9 @@ echo ""
 read -p "Enable auto-start on login? (y/n) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
-    systemctl --user enable voicetype
+    systemctl --user enable whisperlayer
     echo "Auto-start enabled!"
 fi
 
 echo ""
-echo "Done! Enjoy VoiceType 🎤"
+echo "Done! Enjoy WhisperLayer 🎤"

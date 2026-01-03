@@ -1,4 +1,4 @@
-# VoiceType 🎤
+# WhisperLayer 🎤
 
 **Linux Native Speech-to-Text Voice Typing**
 
@@ -25,8 +25,8 @@ Transform your voice into text anywhere on your Linux desktop. Press a hotkey, s
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/voicetype.git
-cd voicetype
+git clone https://github.com/your-username/whisperlayer.git
+cd whisperlayer
 
 # Run the installer
 chmod +x install.sh
@@ -34,8 +34,9 @@ chmod +x install.sh
 ```
 
 The installer will:
+- Install system dependencies (auto-detects Ubuntu/Fedora/Arch)
 - Create a Python virtual environment
-- Install all dependencies
+- Install all Python dependencies
 - Add you to the `input` group (for global hotkeys)
 - Create a desktop launcher
 - Set up systemd service for auto-start
@@ -44,7 +45,7 @@ The installer will:
 
 ```bash
 # Prerequisites (Ubuntu/Debian)
-sudo apt install python3-venv python3-pip python3-gi portaudio19-dev
+sudo apt install python3-venv python3-pip python3-gi portaudio19-dev python3-pyqt5
 
 # For NVIDIA GPU support
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
@@ -53,26 +54,26 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm5.6
 
 # Clone and install
-git clone https://github.com/your-username/voicetype.git
-cd voicetype
+git clone https://github.com/your-username/whisperlayer.git
+cd whisperlayer
 pip install -e .
 ```
 
 ## 🚀 Usage
 
-### Starting VoiceType
+### Starting WhisperLayer
 
 **From Applications Menu:**
-Search for "VoiceType" in your applications menu.
+Search for "WhisperLayer" in your applications menu.
 
 **From Terminal:**
 ```bash
-voicetype
+whisperlayer
 ```
 
 **As a Service:**
 ```bash
-systemctl --user start voicetype
+systemctl --user start whisperlayer
 ```
 
 ### Using Voice Typing
@@ -138,7 +139,7 @@ python3 -c "import sounddevice; print(sounddevice.query_devices())"
 
 ### Wayland Compatibility
 
-VoiceType works on Wayland but requires `ydotool` for text injection:
+WhisperLayer works on Wayland but requires `ydotool` for text injection:
 ```bash
 sudo apt install ydotool
 ```

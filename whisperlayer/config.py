@@ -1,4 +1,4 @@
-"""Configuration settings for VoiceType - loads from settings.py"""
+"""Configuration settings for WhisperLayer - loads from settings.py"""
 
 from .settings import get_settings
 

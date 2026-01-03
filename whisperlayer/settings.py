@@ -1,4 +1,4 @@
-"""Settings persistence for VoiceType."""
+"""Settings persistence for WhisperLayer."""
 
 import json
 import os
@@ -39,7 +39,7 @@ DEVICE_OPTIONS = ["auto", "cpu", "cuda"]
 
 def get_config_dir() -> Path:
     """Get the configuration directory, creating if needed."""
-    config_dir = Path.home() / ".config" / "voicetype"
+    config_dir = Path.home() / ".config" / "whisperlayer"
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
 
@@ -53,7 +53,7 @@ def get_autostart_path() -> Path:
     """Get the path to the autostart .desktop file."""
     autostart_dir = Path.home() / ".config" / "autostart"
     autostart_dir.mkdir(parents=True, exist_ok=True)
-    return autostart_dir / "voicetype.desktop"
+    return autostart_dir / "whisperlayer.desktop"
 
 
 def get_input_devices_raw() -> list[dict]:
@@ -85,7 +85,7 @@ def get_input_devices() -> list[dict]:
     try:
         import pulsectl
         
-        with pulsectl.Pulse('voicetype-device-enum') as pulse:
+        with pulsectl.Pulse('whisperlayer-device-enum') as pulse:
             sources = pulse.source_list()
             
             for source in sources:
@@ -218,12 +218,12 @@ def set_autostart_enabled(enabled: bool) -> bool:
         elif os.environ.get("FLATPAK_ID"):
             exec_cmd = f"flatpak run {os.environ.get('FLATPAK_ID')}"
         else:
-            # Standard Python installation - use python -m voicetype
-            exec_cmd = f"{sys.executable} -m voicetype"
+            # Standard Python installation - use python -m whisperlayer
+            exec_cmd = f"{sys.executable} -m whisperlayer"
         
         desktop_content = f"""[Desktop Entry]
 Type=Application
-Name=VoiceType
+Name=WhisperLayer
 Comment=Linux Native Speech-to-Text Voice Typing
 Exec={exec_cmd}
 Icon=audio-input-microphone
