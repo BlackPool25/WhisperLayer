@@ -9,8 +9,31 @@ SERVICE_FILE="$HOME/.config/systemd/user/voicetype.service"
 AUTOSTART_FILE="$HOME/.config/autostart/voicetype.desktop"
 
 echo "=========================================="
-echo "VoiceType Installer"
+echo "VoiceType Installer v1.0.0-beta"
 echo "=========================================="
+
+# Detect package manager and install system dependencies
+echo "Checking system dependencies..."
+if command -v apt-get &> /dev/null; then
+    echo "Detected Debian/Ubuntu - installing system packages..."
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq python3-venv python3-pip python3-gi \
+        portaudio19-dev libgirepository1.0-dev gir1.2-appindicator3-0.1 \
+        python3-pyqt5 ydotool 2>/dev/null || echo "Some packages may already be installed"
+elif command -v dnf &> /dev/null; then
+    echo "Detected Fedora/RHEL - installing system packages..."
+    sudo dnf install -y -q python3-virtualenv python3-pip python3-gobject \
+        portaudio-devel gobject-introspection-devel libappindicator-gtk3 \
+        python3-qt5 ydotool 2>/dev/null || echo "Some packages may already be installed"
+elif command -v pacman &> /dev/null; then
+    echo "Detected Arch Linux - installing system packages..."
+    sudo pacman -S --noconfirm --needed python-virtualenv python-pip python-gobject \
+        portaudio gobject-introspection libappindicator-gtk3 \
+        python-pyqt5 ydotool 2>/dev/null || echo "Some packages may already be installed"
+else
+    echo "Warning: Could not detect package manager. Please install manually:"
+    echo "  - python3-venv, python3-gi, portaudio, PyQt5, ydotool"
+fi
 
 # Check Python
 if ! command -v python3 &> /dev/null; then
