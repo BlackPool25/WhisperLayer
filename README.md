@@ -1,145 +1,170 @@
-# VoiceType - Linux Native STT Voice Typing
+# VoiceType 🎤
 
-A modern Linux native speech-to-text application that enables voice typing into any active window with a hotkey-triggered overlay.
+**Linux Native Speech-to-Text Voice Typing**
+
+Transform your voice into text anywhere on your Linux desktop. Press a hotkey, speak, and your words appear where your cursor is.
+
+![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue)
+![License: MIT](https://img.shields.io/badge/License-MIT-green)
+![Platform: Linux](https://img.shields.io/badge/Platform-Linux-orange)
 
 ## ✨ Features
 
-- 🎤 **Live Transcription** - Real-time speech-to-text using OpenAI Whisper
-- ⌨️ **Auto-Type** - Automatically types transcribed text into the active window
-- 🎨 **Modern Overlay** - Sleek Gemini-style sliding bar with voice-reactive color effects
-- 🔧 **Modern Settings** - Beautiful dark-themed settings with live configuration updates
-- 🔥 **GPU Accelerated** - Supports CUDA (NVIDIA) and ROCm (AMD)
-- 🐧 **Linux Native** - Works on X11 and Wayland (GNOME, KDE, etc.)
-- 🔊 **Smart Audio** - Shows friendly device names like Ubuntu Sound Settings
-- ⚡ **Hot Reload** - Change settings without restarting the app
+- **🎯 Type Anywhere** - Works in any application (browsers, editors, terminals)
+- **🧠 Whisper AI** - OpenAI's state-of-the-art speech recognition
+- **⚡ GPU Accelerated** - NVIDIA (CUDA) and AMD (ROCm) GPU support
+- **🔒 Privacy First** - 100% offline, no cloud services
+- **⌨️ Global Hotkey** - Configurable keyboard shortcut
+- **🎚️ Live Streaming** - Real-time transcription as you speak
+- **🖥️ Multi-Monitor** - Scales correctly on multi-monitor setups
+- **🔧 System Tray** - Minimal, unobtrusive interface
 
-## 📋 Requirements
+## 📦 Installation
 
-- Python 3.10+
-- Linux with X11 or Wayland
-- GPU recommended (NVIDIA CUDA or AMD ROCm) for faster transcription
-- PulseAudio or PipeWire for audio
-
-## 🚀 Quick Installation
+### Quick Install (Recommended)
 
 ```bash
-# Clone and install
-git clone https://github.com/yourusername/voicetype.git
+# Clone the repository
+git clone https://github.com/your-username/voicetype.git
 cd voicetype
+
+# Run the installer
+chmod +x install.sh
 ./install.sh
 ```
 
 The installer will:
-- Install system dependencies
-- Set up a Python virtual environment
-- Configure ydotool for text injection
-- Add desktop integration
+- Create a Python virtual environment
+- Install all dependencies
+- Add you to the `input` group (for global hotkeys)
+- Create a desktop launcher
+- Set up systemd service for auto-start
 
-## 📦 Manual Installation
+### Manual Installation
 
 ```bash
-# System dependencies (Debian/Ubuntu)
-sudo apt install python3-dev python3-venv python3-gi python3-gi-cairo \
-    gir1.2-gtk-3.0 gir1.2-appindicator3-0.1 \
-    portaudio19-dev libpulse-dev \
-    ydotool xdotool
+# Prerequisites (Ubuntu/Debian)
+sudo apt install python3-venv python3-pip python3-gi portaudio19-dev
 
-# Add user to input group (for global hotkeys)
-sudo usermod -aG input $USER
-# Log out and back in for group changes
+# For NVIDIA GPU support
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
-# Python environment
-python3 -m venv --system-site-packages .venv
-source .venv/bin/activate
+# For AMD GPU support (ROCm)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/rocm5.6
+
+# Clone and install
+git clone https://github.com/your-username/voicetype.git
+cd voicetype
 pip install -e .
 ```
 
-## 🎯 Usage
+## 🚀 Usage
 
+### Starting VoiceType
+
+**From Applications Menu:**
+Search for "VoiceType" in your applications menu.
+
+**From Terminal:**
 ```bash
-# Run VoiceType
 voicetype
-
-# Or with virtual environment
-source .venv/bin/activate
-python -m voicetype
 ```
 
-**Default Hotkey**: `Ctrl+Alt+F` - Press to start/stop recording
+**As a Service:**
+```bash
+systemctl --user start voicetype
+```
 
-## ⚙️ Configuration
+### Using Voice Typing
 
-Access settings via the system tray icon or run with `--settings`.
+1. **Click** in any text field where you want to type
+2. **Press** the hotkey (default: `Ctrl+Alt+F`)
+3. **Speak** - your words are transcribed in real-time
+4. **Stop speaking** - after 1.5s silence, text is typed automatically
 
-### Available Settings:
+The tray icon indicates recording status:
+- 🔴 Red = Recording
+- ⚫ Grey = Idle
+
+### Settings
+
+Right-click the tray icon → **Settings** to configure:
 
 | Setting | Description |
 |---------|-------------|
-| **Whisper Model** | tiny, base, small, medium, large, turbo |
-| **Compute Device** | auto, cpu, cuda |
-| **Microphone** | Select from detected audio devices |
+| **Model** | Whisper model size (tiny/base/small/medium/large/turbo) |
+| **Device** | GPU acceleration (auto/cuda/cpu) |
 | **Hotkey** | Custom keyboard shortcut |
-| **Silence Timeout** | Auto-stop after silence (0.5-5 seconds) |
+| **Silence Duration** | Auto-stop timeout |
+| **Input Device** | Microphone selection |
 | **Auto-start** | Launch on login |
 
-### Model Recommendations:
+## 🎯 Whisper Models
 
-| Model | VRAM | Speed | Accuracy | Use Case |
+| Model | VRAM | Speed | Accuracy | Best For |
 |-------|------|-------|----------|----------|
-| tiny | ~1GB | ⚡⚡⚡⚡ | ★☆☆☆ | Quick drafts |
-| base | ~1GB | ⚡⚡⚡ | ★★☆☆ | General use |
-| small | ~2GB | ⚡⚡ | ★★★☆ | Good balance |
-| medium | ~5GB | ⚡ | ★★★★ | High accuracy |
-| **turbo** | ~6GB | ⚡⚡⚡ | ★★★★ | **Recommended** |
-| large | ~10GB | ⚡ | ★★★★★ | Best accuracy |
-
-## 🖼️ Screenshots
-
-### Voice-Reactive Overlay
-The overlay slides from the top and reacts to your voice with animated color effects.
-
-### Modern Settings
-Dark-themed settings with grouped options and real-time device detection.
+| `tiny` | ~1GB | ⚡⚡⚡⚡ | ⭐ | Quick notes, low-end hardware |
+| `base` | ~1GB | ⚡⚡⚡ | ⭐⭐ | General use |
+| `small` | ~2GB | ⚡⚡ | ⭐⭐⭐ | Good balance |
+| `medium` | ~5GB | ⚡ | ⭐⭐⭐⭐ | Better accuracy |
+| `large` | ~10GB | 🐢 | ⭐⭐⭐⭐⭐ | Best accuracy |
+| **`turbo`** | ~6GB | ⚡⚡⚡ | ⭐⭐⭐⭐ | **Recommended** |
 
 ## 🔧 Troubleshooting
 
-### Hotkey not working?
-- Ensure you're in the `input` group: `groups | grep input`
-- On Wayland, evdev is used for global hotkeys (requires input group)
+### Hotkey Not Working
 
-### No audio devices showing?
-- Make sure PulseAudio/PipeWire is running
-- Install pulsectl: `pip install pulsectl`
-
-### Text not typing?
-- Check ydotool service: `systemctl status ydotoold`
-- Make sure you're in the `input` group
-
-### GPU not detected?
-- For NVIDIA: Install CUDA and pytorch with CUDA support
-- For AMD: Install ROCm and pytorch with ROCm support
-
-## 📁 Project Structure
-
+Ensure you're in the `input` group:
+```bash
+groups | grep input
+# If not present:
+sudo usermod -aG input $USER
+# Log out and back in
 ```
-voicetype/
-├── __main__.py     # Entry point
-├── app.py          # Main application controller
-├── audio.py        # Audio capture with sounddevice
-├── config.py       # Configuration and settings bridge
-├── hotkey.py       # Global hotkey handling (evdev/pynput)
-├── overlay.py      # Modern animated overlay
-├── settings.py     # Settings persistence and management
-├── settings_ui.py  # Modern GTK3 settings window
-├── system.py       # Text injection and window detection
-├── transcriber.py  # Whisper transcription
-└── tray.py         # System tray integration
+
+### No GPU Acceleration
+
+Check CUDA/ROCm is working:
+```bash
+python3 -c "import torch; print(torch.cuda.is_available())"
 ```
+
+### Audio Issues
+
+List available microphones:
+```bash
+python3 -c "import sounddevice; print(sounddevice.query_devices())"
+```
+
+### Wayland Compatibility
+
+VoiceType works on Wayland but requires `ydotool` for text injection:
+```bash
+sudo apt install ydotool
+```
+
+## 📋 Requirements
+
+- **OS:** Linux (Ubuntu 22.04+, Fedora 38+, Arch)
+- **Python:** 3.10 or newer
+- **GPU (optional):** NVIDIA with CUDA 11.8+ or AMD with ROCm 5.6+
+- **RAM:** 4GB minimum, 8GB+ recommended
+- **Microphone:** Any input device
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please feel free to submit issues and pull requests.
 
 ## 📄 License
 
-MIT License - see LICENSE file for details.
+MIT License - see [LICENSE](LICENSE) for details.
+
+## 🙏 Acknowledgments
+
+- [OpenAI Whisper](https://github.com/openai/whisper) - Speech recognition model
+- [PyTorch](https://pytorch.org/) - Deep learning framework
+- [GTK](https://www.gtk.org/) - Settings UI framework
+
+---
+
+**Made with ❤️ for the Linux community**

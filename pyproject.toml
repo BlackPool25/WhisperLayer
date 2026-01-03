@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "voicetype"
-version = "1.0.0"
+version = "1.0.0-beta"
 description = "Linux Native Speech-to-Text Voice Typing with Whisper"
 readme = "README.md"
 license = {text = "MIT"}
@@ -33,6 +33,7 @@ dependencies = [
     "numpy>=1.24.0",
     "pynput>=1.7.6",
     "PyGObject>=3.44.0",
+    "PyQt5>=5.15.0",
     "torch>=2.0.0",
     "pulsectl>=23.5.0",
     "evdev>=1.6.0",
