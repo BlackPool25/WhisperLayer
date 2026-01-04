@@ -194,6 +194,7 @@ class WhisperLayerApp:
         
         # Start audio capture
         self.audio.clear_buffer()
+        self._accumulated_audio = []  # CRITICAL: Clear local audio buffer from previous session
         self.audio.start()
         
         # Start transcription thread
@@ -227,16 +228,22 @@ class WhisperLayerApp:
         if self._transcription_thread and self._transcription_thread.is_alive():
             self._transcription_thread.join(timeout=2.0)
         
-        # Combine confirmed text + any pending text for final result
+        # Combine confirmed text + pending text
+        # Since we use Full Buffer Transcription now, pending_text usually has everything
         final_text = (self._confirmed_text + " " + self._pending_text).strip()
         
-        # If we have significant pending audio, do one final transcription
+        # Only do a final transcription if we have absolutely nothing
+        # The streaming loop (Full Buffer) is accurate and we shouldn't risk
+        # a final glitch/corruption by re-transcribing the same buffer again
         if self._accumulated_audio and not final_text:
-            full_audio = np.concatenate(self._accumulated_audio)
-            if len(full_audio) > config.SAMPLE_RATE * 0.3:
-                result = self.transcriber.transcribe(full_audio)
-                if result.text:
-                    final_text = result.text.strip()
+            try:
+                full_audio = np.concatenate(self._accumulated_audio)
+                if len(full_audio) > config.SAMPLE_RATE * 0.3:
+                    result = self.transcriber.transcribe(full_audio)
+                    if result.text:
+                        final_text = result.text.strip()
+            except Exception as e:
+                print(f"Final transcription failed: {e}")
         
         self._final_text = final_text
         print(f"Final text: '{self._final_text}'")
@@ -312,41 +319,30 @@ class WhisperLayerApp:
             if current_time - last_process_time >= chunk_interval and self._accumulated_audio:
                 last_process_time = current_time
                 
-                # --- SLIDING WINDOW TRANSCRIPTION ---
-                # Only transcribe last ~5 seconds for constant speed
-                window_samples = config.SAMPLE_RATE * 5  # 5 seconds
+                # --- FULL BUFFER TRANSCRIPTION ---
+                # Transcribing the full buffer avoids duplication issues caused by 
+                # sliding windows and audio trimming boundaries.
+                # Whisper is fast enough for typical command lengths (< 30s).
                 full_audio = np.concatenate(self._accumulated_audio)
-                
-                if len(full_audio) > window_samples:
-                    # Use sliding window - last 5 seconds only
-                    window_audio = full_audio[-window_samples:]
-                else:
-                    window_audio = full_audio
+                window_audio = full_audio
                 
                 if len(window_audio) > config.SAMPLE_RATE * 0.5:  # At least 500ms
                     result = self.transcriber.transcribe(window_audio)
                     if result.text:
-                        # Use transcription directly - no filtering during streaming
+                        # Use transcription directly
                         self._pending_text = result.text.strip()
                         
-                        # Combine confirmed + pending for display
-                        display_text = (self._confirmed_text + " " + self._pending_text).strip()
+                        # Full text is just the pending text (since we process full audio)
+                        display_text = self._pending_text
                         print(f"Streaming: '{display_text}'")
                         self._final_text = display_text
                         
                         # Update overlay with live transcription
                         self.overlay.set_transcription(display_text[-100:] if len(display_text) > 100 else display_text)
                 
-                # Periodically confirm text (every ~3 seconds of audio)
-                # This moves pending text to confirmed
-                if current_time - self._last_confirm_time > 3.0 and self._pending_text:
-                    self._confirmed_text = (self._confirmed_text + " " + self._pending_text).strip()
-                    self._pending_text = ""
-                    self._last_confirm_time = current_time
-                    # Clear old audio, keep last 1 second for continuity
-                    keep_samples = config.SAMPLE_RATE * 1
-                    if len(full_audio) > keep_samples:
-                        self._accumulated_audio = [full_audio[-keep_samples:]]
+                # Note: We removed the periodic confirmation/audio trimming logic
+                # because it was causing text duplication on overlap boundaries.
+                # The buffer is fully cleared when recording stops.
             
             # Auto-stop after silence (use settings value)
             silence_timeout = self.settings.silence_duration
@@ -362,32 +358,10 @@ class WhisperLayerApp:
     
     def _finalize_recording(self):
         """Finalize recording after auto-stop."""
-        # Stop audio capture
-        self.audio.stop()
-        
-        # Update tray icon state
-        if self.tray:
-            self.tray.set_recording(False)
-        
-        # Update overlay
-        self.overlay.set_recording(False)
-        
-        # Type the final text
-        if self._final_text.strip():
-            self.overlay.set_status("Typing...")
-            time.sleep(0.2)
-            
-            success = self.injector.type_text(self._final_text)
-            if success:
-                self.overlay.set_status("Done!")
-            else:
-                self.overlay.set_status("Type failed")
-        else:
-            self.overlay.set_status("Done")
-        
-        # Hide overlay after a delay
-        time.sleep(1.5)
-        self.overlay.hide()
+        print("DEBUG: Finalizing recording (auto-stop)...")
+        # Delegate to the main stop method to ensure consistent behavior
+        # (Command execution, overlay updates, typing, etc.)
+        self._stop_recording()
         print("Recording finalized (auto-stop)")
     
     def _on_transcription(self, result: TranscriptionResult):

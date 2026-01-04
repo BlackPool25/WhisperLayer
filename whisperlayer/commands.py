@@ -116,6 +116,9 @@ class VoiceCommandDetector:
         """
         if not text:
             return text, []
+
+        print(f"DEBUG: scan_text called with '{text}'")
+        print(f"DEBUG: Command count: {len(self.commands)}")
         
         matches = []
         cleaned = text
@@ -134,16 +137,25 @@ class VoiceCommandDetector:
                 filler_pattern = "(?:" + "|".join(self.FILLER_WORDS) + r")?\s*"
                 end_pattern = "(?:" + "|".join(self.END_WORDS) + ")"
                 
-                # Handle multi-word triggers
+                # Robust separator that handles spaces and punctuation (Okay, search / Okay! paste)
+                SEP = r"(?:[.,!?]+\s*|\s+)"
+                
+                # Handle multi-word triggers (allow punctuation inside actions too if needed)
                 trigger_words = trigger.split()
-                action_pattern = r"\s+".join(trigger_words)
+                action_pattern = SEP.join(trigger_words)
                 
                 pattern = (
-                    trigger_regex + r"\s+" + filler_pattern + action_pattern + 
-                    r"\s+(.+?)\s+" + trigger_regex + r"\s+" + filler_pattern + end_pattern
+                    trigger_regex + SEP + filler_pattern + action_pattern + 
+                    SEP + r"(.+?)" + SEP + trigger_regex + SEP + filler_pattern + end_pattern
                 )
                 
+                # DEBUG: Print checking for search command to debug failure
+                if "search" in trigger:
+                    print(f"DEBUG: Checking pattern for '{trigger}' against text...")
+                    # print(f"DEBUG: Pattern: {pattern}")
+                
                 for match in re.finditer(pattern, text_lower, re.IGNORECASE):
+                    print(f"DEBUG: Found match for {trigger}!")
                     content = match.group(1).strip()
                     full_match = text[match.start():match.end()]
                     
@@ -155,7 +167,9 @@ class VoiceCommandDetector:
                         # Get original case content from the text
                         orig_content = text[match.start() + text_lower[match.start():].find(content.split()[0]) if content else match.start():match.end()]
                         # Extract just the content part using action_pattern
-                        content_match = re.search(action_pattern + r"\s+(.+?)\s+" + trigger_regex, orig_content, re.IGNORECASE)
+                        # We need to re-construct the regex parts for the inner match
+                        inner_sep = r"(?:[.,!?]+\s*|\s+)"
+                        content_match = re.search(action_pattern + inner_sep + r"(.+?)" + inner_sep + trigger_regex, orig_content, re.IGNORECASE)
                         if content_match:
                             orig_content = content_match.group(1).strip()
                         else:
@@ -176,10 +190,13 @@ class VoiceCommandDetector:
             if not cmd.requires_content:
                 # Build regex
                 filler_pattern = "(?:" + "|".join(self.FILLER_WORDS) + r")?\s*"
-                trigger_words = trigger.split()
-                action_pattern = r"\s+".join(trigger_words)
+                # Robust separator
+                SEP = r"(?:[.,!?]+\s*|\s+)"
                 
-                pattern = trigger_regex + r"\s+" + filler_pattern + action_pattern + r"(?:\s|$|[.,!?])"
+                trigger_words = trigger.split()
+                action_pattern = SEP.join(trigger_words)
+                
+                pattern = trigger_regex + SEP + filler_pattern + action_pattern + r"(?:\s|$|[.,!?])"
                 
                 for match in re.finditer(pattern, cleaned.lower(), re.IGNORECASE):
                     full_match = cleaned[match.start():match.end()].strip()
@@ -200,12 +217,42 @@ class VoiceCommandDetector:
         # Clean up extra whitespace
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
         
+        # --- Aggressive Post-Cleaning ---
+        # If commands were found, the remaining text often contains hallucinations
+        # or repetitions of the command content/triggers. We remove those.
+        if matches and cleaned:
+            # 1. Remove repetitions of command content
+            for m in matches:
+                if m.content and len(m.content) > 3:
+                    # Remove content if it appears again in cleaned text
+                    # (e.g. "Okay search python" -> executes -> cleaned has "python" left)
+                    cleaned = re.sub(re.escape(m.content), "", cleaned, flags=re.IGNORECASE)
+            
+            # 2. Remove orphan non-content words (triggers, fillers, ends)
+            # Only do this if we actually found commands, to avoid false positives in normal speech
+            bad_words = self.TRIGGER_VARIATIONS.union(self.END_WORDS).union(self.FILLER_WORDS)
+            
+            # Split and filter tokens
+            tokens = cleaned.split()
+            filtered = []
+            for t in tokens:
+                # Strip punctuation for check
+                t_clean = t.lower().strip('.,!?')
+                if t_clean in bad_words:
+                    continue
+                filtered.append(t)
+            
+            cleaned = " ".join(filtered)
+            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+            
         return cleaned, matches
     
     def execute_matches(self, matches: List[CommandMatch]):
         """Execute all matched commands."""
+        print(f"DEBUG: execute_matches called with {len(matches)} matches")
         for match in matches:
             try:
+                print(f"DEBUG: Processing match: {match.command.trigger}")
                 if match.command.requires_content:
                     if match.content:
                         print(f"Executing: {match.command.trigger} with content: '{match.content}'")
@@ -217,6 +264,8 @@ class VoiceCommandDetector:
                     match.command.action()
             except Exception as e:
                 print(f"Command error: {e}")
+                import traceback
+                traceback.print_exc()
     
     def reset(self):
         """Reset state for new recording session."""
