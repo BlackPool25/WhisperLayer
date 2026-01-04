@@ -91,7 +91,7 @@ These require content and an end phrase.
 |---------|--------|---------|
 | `Okay search` | Google Search | `Okay search what is linux okay done` |
 | `Okay google` | Google Search | `Okay google weather today okay done` |
-| `Okay ollama` | Local AI Query | `Okay ollama write a poem okay done` |
+| `Okay delta` | Local AI Query | `Okay delta write a poem okay done` |
 
 ### 3. Advanced Features
 

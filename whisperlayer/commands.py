@@ -26,6 +26,7 @@ class CommandDefinition:
     requires_content: bool = False  # Does it need content between trigger and end?
     requires_end: bool = True       # Does it need an explicit end phrase?
     substitution_handler: Optional[Callable[[], str]] = None # Handler for text substitution (when nested)
+    content_substitution_handler: Optional[Callable[[str], str]] = None  # Handler for content-based substitution (like delta)
     category: str = "general"       # Category for grouping
 
 
@@ -59,6 +60,9 @@ class VoiceCommandDetector:
         
         # Track what we've already executed
         self._executed_hashes: set = set()
+        
+        # Cache for Ollama response (used for substitution pattern)
+        self._last_ollama_response: str = ""
     
     # ... prompt hint methods ...
 
@@ -82,11 +86,14 @@ class VoiceCommandDetector:
         # --- Content Commands (need "command action ... command end") ---
         self.register("search", self._browser_search, requires_content=True, requires_end=True)
         self.register("google", self._browser_search, requires_content=True, requires_end=True)
-        self.register("ollama", self._ollama_query, requires_content=True, requires_end=True)
+        # Delta uses content_substitution_handler - response replaces command text in buffer
+        self.register("delta", lambda x: None, requires_content=True, requires_end=True,
+                      content_substitution_handler=self._ollama_get_response)
     
     def register(self, trigger: str, action: Callable, 
                  requires_content: bool = False, requires_end: bool = True,
                  substitution_handler: Optional[Callable[[], str]] = None,
+                 content_substitution_handler: Optional[Callable[[str], str]] = None,
                  category: str = "general"):
         """Register a new voice command."""
         self.commands[trigger.lower().strip()] = CommandDefinition(
@@ -95,6 +102,7 @@ class VoiceCommandDetector:
             requires_content=requires_content,
             requires_end=requires_end,
             substitution_handler=substitution_handler,
+            content_substitution_handler=content_substitution_handler,
             category=category
         )
         
@@ -205,6 +213,23 @@ class VoiceCommandDetector:
                                 c_start, c_end = match.span(f"CONTENT_{name[4:]}")
                                 content_orig = text[c_start:c_end]
                             
+                            # CONTENT SUBSTITUTION CHECK:
+                            # If this command has a content_substitution_handler (like delta),
+                            # execute it now and use the result as replacement text.
+                            if cmd_def.content_substitution_handler:
+                                # First, recursively process nested commands in content
+                                if content_orig:
+                                    sub_cleaned, sub_matches = self.scan_text(content_orig, is_nested=True)
+                                    if sub_matches:
+                                        matches.extend(sub_matches)
+                                    content_orig = sub_cleaned.strip()
+                                
+                                # Execute the handler with the (possibly substituted) content
+                                subst_text = cmd_def.content_substitution_handler(content_orig)
+                                print(f"DEBUG: Content substitution for '{trigger_key}' -> {len(subst_text)} chars")
+                                replacement_spans.append((*match.span(name), subst_text))
+                                continue  # Don't add to matches - already handled
+                            
                             matches.append(CommandMatch(
                                 command=cmd_def,
                                 content=content_orig,
@@ -288,11 +313,67 @@ class VoiceCommandDetector:
             print("Opening browser home")
             webbrowser.open("https://www.google.com")
     
-    def _ollama_query(self, query: str):
-        """Send query to Ollama (placeholder)."""
-        if query and query.strip():
-            print(f"Ollama: {query}")
-            self._browser_search(f"AI {query}")
+    def _ollama_get_response(self, query: str) -> str:
+        """
+        Query Ollama and return the response for substitution.
+        This is used as a content_substitution_handler - the response
+        replaces the command text in the buffer, enabling nesting.
+        """
+        from .ollama_service import get_ollama_service
+        from .settings import get_settings
+        import re
+        
+        settings = get_settings()
+        
+        # Check if Ollama is enabled
+        if not settings.ollama_enabled:
+            print("Ollama is disabled in settings")
+            return "[Ollama disabled]"
+        
+        if not query or not query.strip():
+            print("Empty Ollama query, skipping")
+            return ""
+        
+        service = get_ollama_service()
+        
+        if not service.is_available():
+            print("Ollama not available - make sure 'ollama serve' is running")
+            return "[Ollama not available]"
+        
+        # Query Ollama
+        print(f"Ollama query: '{query}' (model: {settings.ollama_model})")
+        response = service.generate(query.strip())
+        self._last_ollama_response = response
+        
+        if not response:
+            return "[No response from Ollama]"
+        
+        # Sanitize the response for clean output:
+        # 1. Remove markdown formatting (*, **, ``, etc.)
+        # 2. Remove bullet points
+        # 3. Collapse newlines into spaces
+        # 4. Clean up excessive whitespace
+        
+        sanitized = response
+        
+        # Remove bold/italic markdown
+        sanitized = re.sub(r'\*\*(.+?)\*\*', r'\1', sanitized)  # **bold**
+        sanitized = re.sub(r'\*(.+?)\*', r'\1', sanitized)      # *italic*
+        sanitized = re.sub(r'__(.+?)__', r'\1', sanitized)      # __bold__
+        sanitized = re.sub(r'_(.+?)_', r'\1', sanitized)        # _italic_
+        sanitized = re.sub(r'`(.+?)`', r'\1', sanitized)        # `code`
+        
+        # Remove markdown bullet points
+        sanitized = re.sub(r'^\s*[\*\-\+]\s+', '', sanitized, flags=re.MULTILINE)
+        
+        # Collapse newlines into spaces (for clean single-line output)
+        sanitized = sanitized.replace('\n', ' ').replace('\r', '')
+        
+        # Clean up multiple spaces
+        sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+        
+        print(f"Ollama response sanitized: {len(sanitized)} chars")
+        return sanitized
 
 
 # Simple test

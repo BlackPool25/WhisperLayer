@@ -162,6 +162,40 @@ checkbutton:checked check {
     color: #4f46e5;
     border-color: #d1d5db;
 }
+
+.prompt-textview {
+    background-color: #f9fafb;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #374151;
+}
+
+.prompt-textview:disabled {
+    background-color: #e5e7eb;
+    color: #9ca3af;
+}
+
+.status-label {
+    font-size: 12px;
+    color: #059669;
+    font-weight: 500;
+}
+
+.status-error {
+    color: #dc2626;
+}
+
+.add-model-entry {
+    background-color: #f9fafb;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 13px;
+    color: #374151;
+}
 """
 
 
@@ -201,6 +235,9 @@ class SettingsWindow(Gtk.Window):
         self.connect("delete-event", self._on_delete)
         self.connect("key-press-event", self._on_key_press)
         self.connect("key-release-event", self._on_key_release)
+        
+        # Ollama state
+        self._ollama_models = []
         
         self._build_ui()
         self._load_values()
@@ -357,6 +394,89 @@ class SettingsWindow(Gtk.Window):
         autostart_row.pack_start(self.autostart_check, False, False, 0)
         
         behavior_section.pack_start(autostart_row, False, False, 0)
+        
+        # Ollama AI Section
+        ollama_section = self._create_section("OLLAMA AI")
+        content.pack_start(ollama_section, False, False, 0)
+        
+        # Enable checkbox
+        self.ollama_enable_check = Gtk.CheckButton(label="Enable Ollama AI queries (say 'okay delta')")
+        self.ollama_enable_check.set_margin_top(4)
+        ollama_section.pack_start(self.ollama_enable_check, False, False, 0)
+        
+        # Model selection row
+        model_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        model_row.set_margin_top(10)
+        
+        model_label = Gtk.Label(label="Model:")
+        model_label.get_style_context().add_class("setting-label")
+        model_row.pack_start(model_label, False, False, 0)
+        
+        self.ollama_model_combo = NoScrollComboBox()
+        self.ollama_model_combo.set_hexpand(True)
+        model_row.pack_start(self.ollama_model_combo, True, True, 0)
+        
+        ollama_refresh_btn = Gtk.Button(label="↻")
+        ollama_refresh_btn.get_style_context().add_class("refresh-btn")
+        ollama_refresh_btn.set_tooltip_text("Refresh model list")
+        ollama_refresh_btn.connect("clicked", self._on_refresh_ollama_models)
+        model_row.pack_start(ollama_refresh_btn, False, False, 0)
+        
+        ollama_section.pack_start(model_row, False, False, 0)
+        
+        # Add model row
+        add_model_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        add_model_row.set_margin_top(8)
+        
+        add_label = Gtk.Label(label="Add model:")
+        add_label.get_style_context().add_class("setting-desc")
+        add_model_row.pack_start(add_label, False, False, 0)
+        
+        self.ollama_add_entry = Gtk.Entry()
+        self.ollama_add_entry.get_style_context().add_class("add-model-entry")
+        self.ollama_add_entry.set_placeholder_text("e.g. mistral:7b")
+        self.ollama_add_entry.set_hexpand(True)
+        add_model_row.pack_start(self.ollama_add_entry, True, True, 0)
+        
+        add_btn = Gtk.Button(label="Add")
+        add_btn.get_style_context().add_class("refresh-btn")
+        add_btn.connect("clicked", self._on_add_ollama_model)
+        add_model_row.pack_start(add_btn, False, False, 0)
+        
+        ollama_section.pack_start(add_model_row, False, False, 0)
+        
+        # Custom prompt toggle
+        prompt_toggle_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        prompt_toggle_row.set_margin_top(12)
+        
+        self.ollama_custom_prompt_check = Gtk.CheckButton(label="Custom system prompt (change at your own risk)")
+        self.ollama_custom_prompt_check.connect("toggled", self._on_custom_prompt_toggled)
+        prompt_toggle_row.pack_start(self.ollama_custom_prompt_check, False, False, 0)
+        
+        ollama_section.pack_start(prompt_toggle_row, False, False, 0)
+        
+        # Prompt text view
+        prompt_scroll = Gtk.ScrolledWindow()
+        prompt_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        prompt_scroll.set_min_content_height(80)
+        prompt_scroll.set_max_content_height(120)
+        prompt_scroll.set_margin_top(6)
+        
+        self.ollama_prompt_textview = Gtk.TextView()
+        self.ollama_prompt_textview.get_style_context().add_class("prompt-textview")
+        self.ollama_prompt_textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.ollama_prompt_textview.set_sensitive(False)  # Disabled by default
+        self.ollama_prompt_buffer = self.ollama_prompt_textview.get_buffer()
+        prompt_scroll.add(self.ollama_prompt_textview)
+        
+        ollama_section.pack_start(prompt_scroll, False, False, 0)
+        
+        # Status label
+        self.ollama_status_label = Gtk.Label()
+        self.ollama_status_label.get_style_context().add_class("status-label")
+        self.ollama_status_label.set_halign(Gtk.Align.START)
+        self.ollama_status_label.set_margin_top(8)
+        ollama_section.pack_start(self.ollama_status_label, False, False, 0)
     
     def _create_section(self, title):
         section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -423,6 +543,14 @@ class SettingsWindow(Gtk.Window):
         self.hotkey_label.set_text(self._current_hotkey)
         self.silence_scale.set_value(self.settings.silence_duration)
         self.autostart_check.set_active(self.settings.auto_start)
+        
+        # Load Ollama settings
+        self.ollama_enable_check.set_active(self.settings.ollama_enabled)
+        self._refresh_ollama_models_internal()
+        self.ollama_custom_prompt_check.set_active(self.settings.ollama_custom_prompt_enabled)
+        self.ollama_prompt_buffer.set_text(self.settings.ollama_system_prompt)
+        self.ollama_prompt_textview.set_sensitive(self.settings.ollama_custom_prompt_enabled)
+        self._update_ollama_status()
     
     def _on_hotkey_button_clicked(self, button):
         if self._capturing_hotkey:
@@ -510,12 +638,112 @@ class SettingsWindow(Gtk.Window):
         self.settings.set("silence_duration", self.silence_scale.get_value(), save=False, notify=True)
         self.settings.set("auto_start", self.autostart_check.get_active(), save=False, notify=True)
         
+        # Save Ollama settings
+        self.settings.set("ollama_enabled", self.ollama_enable_check.get_active(), save=False, notify=True)
+        
+        ollama_model = self.ollama_model_combo.get_active_id()
+        if ollama_model:
+            self.settings.set("ollama_model", ollama_model, save=False, notify=True)
+        
+        self.settings.set("ollama_custom_prompt_enabled", self.ollama_custom_prompt_check.get_active(), save=False, notify=True)
+        
+        # Get prompt text
+        start_iter = self.ollama_prompt_buffer.get_start_iter()
+        end_iter = self.ollama_prompt_buffer.get_end_iter()
+        prompt_text = self.ollama_prompt_buffer.get_text(start_iter, end_iter, True)
+        self.settings.set("ollama_system_prompt", prompt_text, save=False, notify=True)
+        
         self.settings.save()
         
         if self.on_save:
             self.on_save()
         
         self.hide()
+    
+    def _refresh_ollama_models_internal(self):
+        """Internal method to refresh Ollama models list."""
+        self.ollama_model_combo.remove_all()
+        self._ollama_models = []
+        
+        try:
+            from .ollama_service import get_ollama_service
+            service = get_ollama_service()
+            
+            if service.is_available():
+                self._ollama_models = service.list_models()
+        except Exception as e:
+            print(f"Error listing Ollama models: {e}")
+        
+        # Add custom models from settings
+        custom_models = self.settings.ollama_custom_models or []
+        for model in custom_models:
+            if model and model not in self._ollama_models:
+                self._ollama_models.append(model)
+        
+        # Populate combo box
+        for model in self._ollama_models:
+            self.ollama_model_combo.append(model, model)
+        
+        # Set current selection
+        current_model = self.settings.ollama_model
+        if current_model:
+            if current_model not in self._ollama_models:
+                # Add current model even if not in list
+                self.ollama_model_combo.append(current_model, current_model)
+                self._ollama_models.append(current_model)
+            self.ollama_model_combo.set_active_id(current_model)
+        
+        if not self.ollama_model_combo.get_active_id() and self._ollama_models:
+            self.ollama_model_combo.set_active(0)
+    
+    def _on_refresh_ollama_models(self, button):
+        """Handler for refresh button click."""
+        self._refresh_ollama_models_internal()
+        self._update_ollama_status()
+    
+    def _on_add_ollama_model(self, button):
+        """Handler for add model button click."""
+        model_name = self.ollama_add_entry.get_text().strip()
+        if not model_name:
+            return
+        
+        # Add to custom models in settings
+        custom_models = list(self.settings.ollama_custom_models or [])
+        if model_name not in custom_models:
+            custom_models.append(model_name)
+            self.settings.set("ollama_custom_models", custom_models, save=True, notify=False)
+        
+        # Add to combo and select
+        if model_name not in self._ollama_models:
+            self.ollama_model_combo.append(model_name, model_name)
+            self._ollama_models.append(model_name)
+        
+        self.ollama_model_combo.set_active_id(model_name)
+        self.ollama_add_entry.set_text("")
+        
+        self._update_ollama_status()
+    
+    def _on_custom_prompt_toggled(self, button):
+        """Handler for custom prompt checkbox toggle."""
+        enabled = button.get_active()
+        self.ollama_prompt_textview.set_sensitive(enabled)
+    
+    def _update_ollama_status(self):
+        """Update the Ollama status label."""
+        try:
+            from .ollama_service import get_ollama_service
+            service = get_ollama_service()
+            
+            if service.is_available():
+                model_count = len(self._ollama_models)
+                self.ollama_status_label.set_text(f"✓ Connected ({model_count} models available)")
+                self.ollama_status_label.get_style_context().remove_class("status-error")
+            else:
+                self.ollama_status_label.set_text("✗ Ollama not running (run 'ollama serve')")
+                self.ollama_status_label.get_style_context().add_class("status-error")
+        except Exception as e:
+            self.ollama_status_label.set_text(f"✗ Error: {str(e)[:30]}")
+            self.ollama_status_label.get_style_context().add_class("status-error")
         
     def _on_open_guide(self, button):
         """Open the online GitHub guide."""

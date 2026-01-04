@@ -8,6 +8,27 @@ from typing import Any, Optional
 import sounddevice as sd
 
 
+# Default Ollama system prompt - optimized for STT voice typing
+DEFAULT_OLLAMA_PROMPT = """You are a voice typing assistant. Your responses will be directly typed into a text field.
+
+CRITICAL RULES:
+1. Respond with PLAIN TEXT ONLY - no markdown, no formatting, no special characters
+2. Be CONCISE and DIRECT - give the core answer first, skip lengthy explanations unless asked
+3. NO bullet points, numbered lists, asterisks, backticks, or hashes
+4. NO code blocks or technical formatting
+5. Use simple punctuation only: periods, commas, question marks
+6. Keep responses SHORT - prefer 1-3 sentences for simple questions
+7. For factual questions, just state the fact directly
+8. Do not explain your reasoning unless explicitly asked
+9. Do not add disclaimers, caveats, or "it depends" unless critical
+
+EXAMPLES of good responses:
+- Question: "What is 2+2?" → Answer: "4"
+- Question: "Capital of France?" → Answer: "Paris"
+- Question: "Best programming language?" → Answer: "Python is widely recommended for beginners due to its readability. For performance-critical applications, consider C++ or Rust."
+
+Remember: Your response will be typed directly where the user's cursor is. Be helpful but brief."""
+
 # Default settings
 DEFAULTS = {
     "model": "turbo",
@@ -18,6 +39,12 @@ DEFAULTS = {
     "silence_duration": 1.5,
     "auto_start": False,
     "language": "en",
+    # Ollama settings
+    "ollama_enabled": True,
+    "ollama_model": "llama3.2:3b",
+    "ollama_custom_models": [],  # User-added model names
+    "ollama_custom_prompt_enabled": False,  # "Change at your own risk" toggle
+    "ollama_system_prompt": DEFAULT_OLLAMA_PROMPT,
 }
 
 # Available Whisper models (from openai-whisper)
@@ -403,6 +430,27 @@ class Settings:
     @property
     def language(self) -> str:
         return self.get("language", "en")
+    
+    # Ollama properties
+    @property
+    def ollama_enabled(self) -> bool:
+        return self.get("ollama_enabled", True)
+    
+    @property
+    def ollama_model(self) -> str:
+        return self.get("ollama_model", "llama3.2:3b")
+    
+    @property
+    def ollama_custom_models(self) -> list:
+        return self.get("ollama_custom_models", [])
+    
+    @property
+    def ollama_custom_prompt_enabled(self) -> bool:
+        return self.get("ollama_custom_prompt_enabled", False)
+    
+    @property
+    def ollama_system_prompt(self) -> str:
+        return self.get("ollama_system_prompt", DEFAULT_OLLAMA_PROMPT)
 
 
 # Global settings instance

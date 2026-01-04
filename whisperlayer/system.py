@@ -38,17 +38,34 @@ class TextInjector:
             return False
         
         try:
-            # ydotool type command
-            # --key-delay: delay between key presses in ms
-            result = subprocess.run(
-                [self._ydotool_path, "type", "--key-delay", "5", "--", text],
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            if result.returncode != 0:
-                print(f"ydotool stderr: {result.stderr}")
-            return result.returncode == 0
+            # Chunk long text to prevent ydotool timeouts/buffering issues
+            chunk_size = 50
+            total_chunks = (len(text) + chunk_size - 1) // chunk_size
+            
+            import time
+            
+            for i in range(0, len(text), chunk_size):
+                chunk = text[i:i+chunk_size]
+                
+                # ydotool type command
+                # --key-delay: delay between key presses in ms
+                result = subprocess.run(
+                    [self._ydotool_path, "type", "--key-delay", "5", "--", chunk],
+                    capture_output=True,
+                    text=True,
+                    timeout=5  # Shorter timeout per chunk
+                )
+                
+                if result.returncode != 0:
+                    print(f"ydotool stderr (chunk {i//chunk_size + 1}/{total_chunks}): {result.stderr}")
+                    return False
+                
+                # Small delay between chunks to let system catch up
+                if total_chunks > 1:
+                    time.sleep(0.05)
+            
+            return True
+            
         except subprocess.TimeoutExpired:
             print("ydotool type timeout")
             return False
@@ -61,17 +78,47 @@ class TextInjector:
         Press a specific key.
         
         Args:
-            key: Key to press (e.g., "enter", "backspace")
+            key: Key to press (e.g., "Return", "BackSpace", "Tab")
             
         Returns:
             True if successful
         """
         if self._ydotool_path is None:
             return False
-            
+        
+        # Map key names to Linux keycodes for ydotool
+        # Format: ["keycode:1", "keycode:0"] for press and release
+        key_map = {
+            "return": ["28:1", "28:0"],
+            "enter": ["28:1", "28:0"],
+            "backspace": ["14:1", "14:0"],
+            "tab": ["15:1", "15:0"],
+            "escape": ["1:1", "1:0"],
+            "space": ["57:1", "57:0"],
+            # Modifier combinations
+            "ctrl+c": ["29:1", "46:1", "46:0", "29:0"],
+            "ctrl+v": ["29:1", "47:1", "47:0", "29:0"],
+            "ctrl+x": ["29:1", "45:1", "45:0", "29:0"],
+            "ctrl+z": ["29:1", "44:1", "44:0", "29:0"],
+            "ctrl+a": ["29:1", "30:1", "30:0", "29:0"],
+            "ctrl+shift+z": ["29:1", "42:1", "44:1", "44:0", "42:0", "29:0"],
+            "ctrl+backspace": ["29:1", "14:1", "14:0", "29:0"],
+        }
+        
+        key_lower = key.lower()
+        
         try:
+            if key_lower in key_map:
+                keycodes = key_map[key_lower]
+            else:
+                # Try to use the key directly as a single keycode
+                keycodes = [key]
+            
+            # Build command: ydotool key <keycode1> <keycode2> ...
+            cmd = [self._ydotool_path, "key"] + keycodes
+            
             result = subprocess.run(
-                [self._ydotool_path, "key", key],
+                cmd,
                 capture_output=True,
                 timeout=5
             )

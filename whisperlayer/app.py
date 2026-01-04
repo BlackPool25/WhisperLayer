@@ -61,6 +61,7 @@ class WhisperLayerApp:
         self.settings.on_change("device", self._on_device_change)
         self.settings.on_change("input_device_id", self._on_audio_device_change)
         self.settings.on_change("silence_duration", self._on_silence_change)
+        self.settings.on_change("ollama_model", self._on_ollama_model_change)
 
     # ... (skipping methods) ...
 
@@ -160,6 +161,19 @@ class WhisperLayerApp:
         """Handle silence duration change."""
         print(f"Silence duration changed: {old_value} -> {new_value}")
         config.SILENCE_DURATION = new_value
+    
+    def _on_ollama_model_change(self, new_value, old_value):
+        """Handle Ollama model change - reload model in real-time."""
+        print(f"Ollama model changed: {old_value} -> {new_value}")
+        try:
+            from .ollama_service import get_ollama_service
+            service = get_ollama_service()
+            if service.is_available():
+                service.load_model(new_value)
+                if self.tray:
+                    self.tray.show_notification("WhisperLayer", f"Ollama model: {new_value}")
+        except Exception as e:
+            print(f"Error loading Ollama model: {e}")
     
     def _show_settings(self):
         """Show settings window."""
@@ -316,11 +330,14 @@ class WhisperLayerApp:
         # This is POST-PROCESSING: only complete patterns are detected
         if self._final_text.strip():
             cleaned_text, matches = self.command_detector.scan_text(self._final_text)
+            
+            # Execute any detected commands
             if matches:
                 print(f"Detected {len(matches)} command(s)")
-                # Execute all detected commands
                 self.command_detector.execute_matches(matches)
-                # Use cleaned text (with command patterns removed)
+            
+            # Use cleaned text if it changed (commands removed OR substitutions applied)
+            if cleaned_text != self._final_text:
                 self._final_text = cleaned_text
                 print(f"Text after commands: '{self._final_text}'")
         
