@@ -53,6 +53,9 @@ class Transcriber:
         # Track last transcription to avoid duplicates
         self._last_text = ""
         
+        # Context for reducing hallucination (passed as initial_prompt)
+        self._context_text = ""
+        
         # Detect device based on settings
         from .settings import get_settings
         device_setting = get_settings().device
@@ -138,6 +141,14 @@ class Transcriber:
             
             print("Model loaded successfully!")
     
+    def set_context(self, text: str):
+        """Set context from previous transcription to help reduce hallucination."""
+        self._context_text = text if text else ""
+    
+    def set_command_hint(self, hint: str):
+        """Set command hint text to help Whisper recognize trigger words."""
+        self._command_hint = hint if hint else ""
+    
     def transcribe(self, audio: np.ndarray) -> TranscriptionResult:
         """
         Transcribe audio buffer synchronously.
@@ -170,14 +181,18 @@ class Transcriber:
             return TranscriptionResult(text="", is_partial=False)
         
         try:
-            # Transcribe with whisper
+            # Transcribe with whisper - optimized for accuracy
+            # temperature=0 for deterministic output, beam_size for better search
             result = self.model.transcribe(
                 audio,
                 language=config.WHISPER_LANGUAGE,
                 fp16=(self.device == "cuda"),
+                temperature=0,              # Deterministic, more accurate
+                beam_size=5,                # Explore multiple hypotheses
+                best_of=5,                  # Best of 5 samples
                 condition_on_previous_text=False,
-                no_speech_threshold=0.6,  # Higher = more aggressive filtering
-                logprob_threshold=-0.8    # Higher = filter low confidence
+                no_speech_threshold=0.6,
+                logprob_threshold=-1.0      # More lenient to avoid cutting words
             )
             
             text = result.get("text", "").strip()

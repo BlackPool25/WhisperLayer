@@ -15,6 +15,7 @@ from .system import TextInjector, WindowInfo
 from .hotkey import HotkeyManager
 from .tray import SystemTray
 from .settings import get_settings
+from .commands import VoiceCommandDetector
 
 
 class WhisperLayerApp:
@@ -29,6 +30,9 @@ class WhisperLayerApp:
         self.injector = TextInjector()
         self.window_info = WindowInfo()
         self.hotkey = HotkeyManager(on_toggle=self._toggle_recording)
+        
+        # Voice command detector (non-invasive, only acts on complete patterns)
+        self.command_detector = VoiceCommandDetector(injector=self.injector)
         
         # System tray
         self.use_tray = use_tray
@@ -68,18 +72,18 @@ class WhisperLayerApp:
             self.tray.show_notification("WhisperLayer", f"Hotkey updated to {new_value}")
     
     def _on_model_change(self, new_value, old_value):
-        """Handle model change - mark for reload."""
+        """Handle model change - unload and mark for reload."""
         print(f"Model changed: {old_value} -> {new_value}")
-        self.transcriber._is_loaded = False
-        self.transcriber.model = None
+        # Properly unload the model to free GPU memory
+        self.transcriber.unload_model()
         if self.tray:
             self.tray.show_notification("WhisperLayer", f"Model will reload: {new_value}")
     
     def _on_device_change(self, new_value, old_value):
-        """Handle compute device change."""
+        """Handle compute device change - requires model reload."""
         print(f"Compute device changed: {old_value} -> {new_value}")
-        self.transcriber._is_loaded = False
-        self.transcriber.model = None
+        # Need to unload and reload on different device
+        self.transcriber.unload_model()
     
     def _on_audio_device_change(self, new_value, old_value):
         """Handle audio input device change."""
@@ -175,15 +179,18 @@ class WhisperLayerApp:
         window_name = self.window_info.get_active_window_name()
         self.overlay.set_window_name(window_name)
         
-        # DON'T show overlay during recording - prevents focus stealing
-        # Just use tray icon indicator instead
-        # Overlay will appear at the end with results
+        # Show overlay during recording to display live transcription
         self.overlay.set_recording(True)
-        self.overlay.set_transcription("")
+        self.overlay.set_transcription("Listening...")
+        self.overlay.set_status("🎤 Recording")
+        self.overlay.show()  # Show overlay now
         
         # Initialize streaming transcription state
         self._confirmed_text = ""  # Text that is finalized
         self._pending_text = ""    # Current sliding window transcription
+        
+        # Reset command detector for new session
+        self.command_detector.reset()
         
         # Start audio capture
         self.audio.clear_buffer()
@@ -234,7 +241,19 @@ class WhisperLayerApp:
         self._final_text = final_text
         print(f"Final text: '{self._final_text}'")
         
-        # Type the final text
+        # Detect and execute voice commands from the final text
+        # This is POST-PROCESSING: only complete patterns are detected
+        if self._final_text.strip():
+            cleaned_text, matches = self.command_detector.scan_text(self._final_text)
+            if matches:
+                print(f"Detected {len(matches)} command(s)")
+                # Execute all detected commands
+                self.command_detector.execute_matches(matches)
+                # Use cleaned text (with command patterns removed)
+                self._final_text = cleaned_text
+                print(f"Text after commands: '{self._final_text}'")
+        
+        # Type the final text (with commands removed)
         if self._final_text.strip():
             # Brief overlay showing final result
             self.overlay.set_transcription(self._final_text)
@@ -307,11 +326,16 @@ class WhisperLayerApp:
                 if len(window_audio) > config.SAMPLE_RATE * 0.5:  # At least 500ms
                     result = self.transcriber.transcribe(window_audio)
                     if result.text:
+                        # Use transcription directly - no filtering during streaming
                         self._pending_text = result.text.strip()
+                        
                         # Combine confirmed + pending for display
                         display_text = (self._confirmed_text + " " + self._pending_text).strip()
                         print(f"Streaming: '{display_text}'")
                         self._final_text = display_text
+                        
+                        # Update overlay with live transcription
+                        self.overlay.set_transcription(display_text[-100:] if len(display_text) > 100 else display_text)
                 
                 # Periodically confirm text (every ~3 seconds of audio)
                 # This moves pending text to confirmed

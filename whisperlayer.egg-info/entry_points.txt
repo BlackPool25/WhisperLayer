@@ -1,0 +1,5 @@
+[console_scripts]
+whisperlayer = whisperlayer.__main__:main
+
+[gui_scripts]
+whisperlayer-gui = whisperlayer.__main__:main

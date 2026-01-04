@@ -37,6 +37,7 @@ dependencies = [
     "torch>=2.0.0",
     "pulsectl>=23.5.0",
     "evdev>=1.6.0",
+    "rapidfuzz>=3.0.0",
 ]
 
 [project.optional-dependencies]

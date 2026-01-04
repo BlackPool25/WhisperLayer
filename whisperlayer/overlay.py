@@ -34,15 +34,16 @@ class GeminiOverlay(QWidget):
     def __init__(self):
         super().__init__()
         
-        # Window Setup - Use ToolTip type for minimal focus interference
+        # Window Setup - Prevent focus stealing while remaining visible
+        # Note: BypassWindowManagerHint can cause overlay to not appear on some systems
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint | 
             Qt.WindowType.WindowStaysOnTopHint | 
             Qt.WindowType.ToolTip |  # ToolTip windows typically don't steal focus
-            Qt.WindowType.WindowDoesNotAcceptFocus
+            Qt.WindowType.WindowDoesNotAcceptFocus  # Don't accept keyboard focus
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)  # Critical for not stealing focus
         self.setAttribute(Qt.WidgetAttribute.WA_X11DoNotAcceptFocus, True)  # X11/XWayland hint
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 

@@ -14,3 +14,6 @@ evdev>=1.6.0
 
 # PyQt5 for modern overlay
 PyQt5>=5.15.0
+
+# Fuzzy matching for voice commands
+rapidfuzz>=3.0.0
