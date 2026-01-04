@@ -50,6 +50,7 @@ class WhisperLayerApp:
         self._last_speech_time = 0.0
         self._transcription_thread: Optional[threading.Thread] = None
         self._stop_transcription = threading.Event()
+        self._completion_event = threading.Event() # Main loop keep-alive
         
         # Final text to type after recording stops
         self._final_text = ""
@@ -60,16 +61,81 @@ class WhisperLayerApp:
         self.settings.on_change("device", self._on_device_change)
         self.settings.on_change("input_device_id", self._on_audio_device_change)
         self.settings.on_change("silence_duration", self._on_silence_change)
+
+    # ... (skipping methods) ...
+
+    def run(self):
+        """Run the application."""
+        print("=" * 50)
+        print("WhisperLayer - Linux Native STT Voice Typing")
+        print("=" * 50)
+        print(f"Session: {self.window_info.get_session_info()}")
+        print(f"Hotkey: {config.HOTKEY}")
+        print(f"Model: {config.WHISPER_MODEL}")
+        print("-" * 50)
+        print("Press the hotkey to start/stop recording.")
+        print("Press Ctrl+C to exit.")
+        print("-" * 50)
+        
+        # Pre-load model (takes a few seconds)
+        print("\nLoading Whisper model (this may take a moment)...")
+        self.transcriber.load_model()
+        
+        # Start overlay (runs GTK in background thread)
+        self.overlay.start()
+        
+        # Start system tray if enabled
+        if self.tray:
+            self.tray.start()
+        
+        # Start hotkey listener
+        self.hotkey.start()
+        
+        # Set up signal handler for clean exit
+        def signal_handler(sig, frame):
+            print("\nShutting down...")
+            self.shutdown()
+            
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        # Keep running until shutdown is requested
+        print("\nReady! Waiting for hotkey...")
+        try:
+            self._completion_event.wait()
+        except KeyboardInterrupt:
+            self.shutdown()
+    
+    def shutdown(self):
+        """Clean shutdown of all components."""
+        if self._completion_event.is_set():
+            return
+            
+        self._completion_event.set()
+        
+        if self._is_recording:
+            self.audio.stop()
+        
+        if self.hotkey:
+            self.hotkey.stop()
+        
+        if self.overlay:
+            self.overlay.stop()
+            
+        if self.transcriber:
+            self.transcriber.stop_worker()
+            
+        print("Shutdown complete")
     
     def _on_hotkey_change(self, new_value, old_value):
-        """Handle hotkey change - restart hotkey listener."""
+        """Handle hotkey change - update hotkey configuration (thread-safe)."""
         print(f"Hotkey changed: {old_value} -> {new_value}")
-        self.hotkey.stop()
-        time.sleep(0.1)  # Brief delay for cleanup
-        self.hotkey = HotkeyManager(on_toggle=self._toggle_recording, hotkey=new_value)
-        self.hotkey.start()
+        # Use thread-safe update instead of stop/start to avoid Qt threading issues
+        if self.hotkey:
+            self.hotkey.update_hotkey(new_value)
         if self.tray:
             self.tray.show_notification("WhisperLayer", f"Hotkey updated to {new_value}")
+    
     
     def _on_model_change(self, new_value, old_value):
         """Handle model change - unload and mark for reload."""
@@ -103,14 +169,12 @@ class WhisperLayerApp:
         def on_capture_start():
             print("Pausing hotkey listener for capture...")
             if self.hotkey:
-                self.hotkey.stop()
+                self.hotkey.pause()
         
         def on_capture_end():
             print("Resuming hotkey listener...")
-            # Reload settings to get new hotkey
-            settings = get_settings()
-            self.hotkey = HotkeyManager(on_toggle=self._toggle_recording, hotkey=settings.hotkey)
-            self.hotkey.start()
+            if self.hotkey:
+                self.hotkey.resume()
             
         if self._settings_window:
             try:
@@ -332,16 +396,71 @@ class WhisperLayerApp:
                         # Use transcription directly
                         self._pending_text = result.text.strip()
                         
-                        # Full text is just the pending text (since we process full audio)
-                        display_text = self._pending_text
-                        print(f"Streaming: '{display_text}'")
-                        self._final_text = display_text
+                        # --- SAFE SLIDING WINDOW ---
+                        # Keep buffer size manageable by finalizing segments that are "safe"
+                        # (i.e. ended long enough ago to not be part of an active command)
+                        
+                        # Current buffer duration (approx)
+                        buffer_duration = len(window_audio) / config.SAMPLE_RATE
+                        
+                        # If buffer gets too long (> 20s), we must slice safely
+                        if buffer_duration > 20.0 and result.segments:
+                            safe_point = 0
+                            committed_text_chunk = ""
+                            
+                            # Find segments that end at least 5.0 seconds before the current audio end
+                            # This KEEPS the last 5s of audio no matter what, protecting active commands
+                            cutoff_time = buffer_duration - 5.0
+                            
+                            keep_idx = 0
+                            for i, seg in enumerate(result.segments):
+                                if seg['end'] < cutoff_time:
+                                    committed_text_chunk += seg['text'] + " "
+                                    safe_point = seg['end']
+                                    keep_idx = i + 1
+                                else:
+                                    break
+                            
+                            if safe_point > 0:
+                                print(f"DEBUG: Sliding Window - Committing {safe_point:.2f}s audio. Keeping last {buffer_duration - safe_point:.2f}s.")
+                                
+                                # 1. Update Confirmed Text
+                                self._confirmed_text = (self._confirmed_text + " " + committed_text_chunk).strip()
+                                
+                                # 2. Slice Audio Buffer
+                                # Convert seconds to samples
+                                samples_to_remove = int(safe_point * config.SAMPLE_RATE)
+                                # Since _accumulated_audio is a list of chunks, this is tricky.
+                                # Easier to replace it with a single chunk of the remainder
+                                # (Whisper handles numpy arrays fine)
+                                remaining_audio = window_audio[samples_to_remove:]
+                                self._accumulated_audio = [remaining_audio]
+                                
+                                # 3. Update Pending Text to only show the REMAINDER
+                                # (The committed part is now in _confirmed_text)
+                                # We can't easily slice text, so we rely on the next loop to re-transcribe the remainder.
+                                # But for display NOW, we try to approximate or just wait for next tick.
+                                # Actually, result.text contained the whole thing.
+                                # The NEXT loop will transcribe only `remaining_audio`.
+                                # So `_pending_text` will update then.
+                                # For now, we leave `_pending_text` as is? No, duplication!
+                                # If we display confirmed + pending, and confirmed has chunk A, and pending has A+B...
+                                # We must remove A from pending!
+                                
+                                # Re-construct pending from remaining segments
+                                remaining_segments = result.segments[keep_idx:]
+                                self._pending_text = "".join([s['text'] for s in remaining_segments]).strip()
+                        
+                        # Full text is confirmed + pending
+                        full_display_text = (self._confirmed_text + " " + self._pending_text).strip()
+                        print(f"Streaming: '{full_display_text}'")
+                        self._final_text = full_display_text
                         
                         # Update overlay with live transcription
-                        self.overlay.set_transcription(display_text[-100:] if len(display_text) > 100 else display_text)
+                        self.overlay.set_transcription(full_display_text[-100:] if len(full_display_text) > 100 else full_display_text)
                 
-                # Note: We removed the periodic confirmation/audio trimming logic
-                # because it was causing text duplication on overlap boundaries.
+                # Note: We implemented logical sliding window above.
+                # The buffer is now safely trimmed when it gets too long.
                 # The buffer is fully cleared when recording stops.
             
             # Auto-stop after silence (use settings value)

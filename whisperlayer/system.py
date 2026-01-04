@@ -79,6 +79,21 @@ class TextInjector:
         except Exception as e:
             print(f"ydotool key error: {e}")
             return False
+            
+    def get_clipboard_text(self) -> str:
+        """
+        Get text from the system clipboard.
+        
+        Returns:
+            Clipboard text or empty string if failed.
+        """
+        try:
+            from PyQt5.QtWidgets import QApplication
+            clipboard = QApplication.clipboard()
+            return clipboard.text()
+        except Exception as e:
+            print(f"Clipboard error: {e}")
+            return ""
 
 
 class WindowInfo:

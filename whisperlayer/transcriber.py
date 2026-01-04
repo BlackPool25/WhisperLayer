@@ -23,6 +23,7 @@ class TranscriptionResult:
     is_partial: bool
     language: str = "en"
     confidence: float = 1.0
+    segments: list = None  # List of segment dicts (start, end, text)
 
 
 class Transcriber:
@@ -208,11 +209,14 @@ class Transcriber:
             if text_lower in hallucination_phrases or len(text_lower) < 3:
                 return TranscriptionResult(text="", is_partial=False)
             
+            segments = result.get("segments", [])
+            
             return TranscriptionResult(
                 text=text,
                 is_partial=False,
                 language=language,
-                confidence=1.0
+                confidence=1.0,
+                segments=segments
             )
             
         except Exception as e:

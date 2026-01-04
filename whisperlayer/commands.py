@@ -24,6 +24,8 @@ class CommandDefinition:
     trigger: str                    # Primary trigger word/phrase
     action: Callable                # Function to execute
     requires_content: bool = False  # Does it need content between trigger and end?
+    requires_end: bool = True       # Does it need an explicit end phrase?
+    substitution_handler: Optional[Callable[[], str]] = None # Handler for text substitution (when nested)
     category: str = "general"       # Category for grouping
 
 
@@ -38,17 +40,9 @@ class CommandMatch:
 class VoiceCommandDetector:
     """
     Detects voice commands from transcription text.
-    
-    Uses 'jarvis' as the trigger word - it's distinctive and Whisper recognizes it well.
-    
-    Patterns:
-    - "jarvis copy" → Execute copy
-    - "jarvis search what is python jarvis stop" → Search for "what is python"
-    - Also handles: "jarvis and search", "jarvis stop", etc.
     """
     
-    # The trigger word - 'okay' is simple, common, and Whisper always recognizes it
-    # We also match variations like "OK", "O.K."
+    # The trigger word
     TRIGGER = "okay"
     TRIGGER_VARIATIONS = {'okay', 'ok', 'o.k.', 'o.k'}
     
@@ -56,7 +50,6 @@ class VoiceCommandDetector:
     FILLER_WORDS = {'and', 'the', 'a', 'to', 'uh', 'um', 'so', 'please', 'now'}
     
     # Words that indicate end of content command
-    # Using 'done' as primary since it's very distinctive
     END_WORDS = {'done', 'finished', 'complete', 'over', 'stop', 'end', 'execute', 'finish'}
     
     def __init__(self, injector=None):
@@ -67,184 +60,186 @@ class VoiceCommandDetector:
         # Track what we've already executed
         self._executed_hashes: set = set()
     
-    def get_prompt_hint(self) -> str:
-        """Get hint text to add to Whisper prompt for better recognition."""
-        # Include trigger word and common commands to help Whisper recognize them
-        cmds = list(self.commands.keys())[:10]  # Top 10 commands
-        return f"Voice commands use the trigger word 'Jarvis'. Commands: {', '.join(cmds)}. Say 'Jarvis stop' to end."
-    
-    def set_injector(self, injector):
-        """Set the text injector for keyboard simulation."""
-        self._injector = injector
-    
+    # ... prompt hint methods ...
+
     def _register_default_commands(self):
         """Register built-in voice commands."""
-        # --- Immediate Commands (no content needed) ---
-        self.register("copy", lambda: self._type_key("ctrl+c"))
-        self.register("paste", lambda: self._type_key("ctrl+v"))
-        self.register("cut", lambda: self._type_key("ctrl+x"))
-        self.register("undo", lambda: self._type_key("ctrl+z"))
-        self.register("redo", lambda: self._type_key("ctrl+shift+z"))
-        self.register("select all", lambda: self._type_key("ctrl+a"))
-        self.register("backspace", lambda: self._type_key("BackSpace"))
-        self.register("delete", lambda: self._type_key("ctrl+BackSpace"))
-        self.register("new line", lambda: self._type_key("Return"))
-        self.register("enter", lambda: self._type_key("Return"))
-        self.register("tab", lambda: self._type_key("Tab"))
+        # --- Immediate Commands (no content, no end trigger needed) ---
+        # Note: requires_end=False matches "Okay copy" instantly
+        self.register("copy", lambda: self._type_key("ctrl+c"), requires_end=False)
+        self.register("paste", lambda: self._type_key("ctrl+v"), requires_end=False,
+                      substitution_handler=self._get_clipboard_content)
+        self.register("cut", lambda: self._type_key("ctrl+x"), requires_end=False)
+        self.register("undo", lambda: self._type_key("ctrl+z"), requires_end=False)
+        self.register("redo", lambda: self._type_key("ctrl+shift+z"), requires_end=False)
+        self.register("select all", lambda: self._type_key("ctrl+a"), requires_end=False)
+        self.register("backspace", lambda: self._type_key("BackSpace"), requires_end=False)
+        self.register("delete", lambda: self._type_key("ctrl+BackSpace"), requires_end=False)
+        self.register("new line", lambda: self._type_key("Return"), requires_end=False)
+        self.register("enter", lambda: self._type_key("Return"), requires_end=False)
+        self.register("tab", lambda: self._type_key("Tab"), requires_end=False)
         
         # --- Content Commands (need "command action ... command end") ---
-        self.register("search", self._browser_search, requires_content=True)
-        self.register("google", self._browser_search, requires_content=True)
-        self.register("ollama", self._ollama_query, requires_content=True)
+        self.register("search", self._browser_search, requires_content=True, requires_end=True)
+        self.register("google", self._browser_search, requires_content=True, requires_end=True)
+        self.register("ollama", self._ollama_query, requires_content=True, requires_end=True)
     
-    def register(self, trigger: str, action: Callable, requires_content: bool = False,
+    def register(self, trigger: str, action: Callable, 
+                 requires_content: bool = False, requires_end: bool = True,
+                 substitution_handler: Optional[Callable[[], str]] = None,
                  category: str = "general"):
         """Register a new voice command."""
         self.commands[trigger.lower().strip()] = CommandDefinition(
             trigger=trigger.lower().strip(),
             action=action,
             requires_content=requires_content,
+            requires_end=requires_end,
+            substitution_handler=substitution_handler,
             category=category
         )
+        
+    def _get_clipboard_content(self) -> str:
+        """Get clipboard content for substitution."""
+        if self._injector:
+            return self._injector.get_clipboard_text()
+        return ""
     
-    def scan_text(self, text: str) -> Tuple[str, List[CommandMatch]]:
+    def scan_text(self, text: str, is_nested: bool = False) -> Tuple[str, List[CommandMatch]]:
         """
         Scan text for complete command patterns.
         
+        Args:
+            text: Text to scan
+            is_nested: Whether this scan is recursive (inside another command)
+        
         Returns:
-            Tuple of (raw_text, cleaned_text, list of matched commands)
+            Tuple of (cleaned_text, list of matched commands)
         """
         if not text:
             return text, []
 
-        print(f"DEBUG: scan_text called with '{text}'")
-        print(f"DEBUG: Command count: {len(self.commands)}")
+        print(f"DEBUG: scan_text called with '{text}' (nested={is_nested})")
         
         matches = []
         cleaned = text
-        
-        # Normalize for pattern matching
         text_lower = text.lower()
         
-        # Build trigger pattern that matches any variation (okay, ok, o.k., etc.)
+        # Build regex patterns dynamically based on registered commands
+        # 1. Sort triggers by length (longest first) to avoid prefix matching issues
+        sorted_commands = sorted(self.commands.values(), key=lambda c: len(c.trigger), reverse=True)
+        
+        # Robust separator
+        SEP = r"(?:[.,!?]+\s*|\s+)"
+        
+        # Common patterns
         trigger_regex = "(?:" + "|".join(re.escape(t) for t in self.TRIGGER_VARIATIONS) + ")"
+        filler_regex = "(?:" + "|".join(re.escape(f) for f in self.FILLER_WORDS) + r")?\s*"
+        end_regex = "(?:" + "|".join(re.escape(e) for e in self.END_WORDS) + ")"
         
-        # Find all content commands first (they're more complex)
-        # Pattern: okay [filler?] [action] ... okay [filler?] done
-        for trigger, cmd in self.commands.items():
-            if cmd.requires_content:
-                # Build regex pattern that allows filler words
-                filler_pattern = "(?:" + "|".join(self.FILLER_WORDS) + r")?\s*"
-                end_pattern = "(?:" + "|".join(self.END_WORDS) + ")"
-                
-                # Robust separator that handles spaces and punctuation (Okay, search / Okay! paste)
-                SEP = r"(?:[.,!?]+\s*|\s+)"
-                
-                # Handle multi-word triggers (allow punctuation inside actions too if needed)
-                trigger_words = trigger.split()
-                action_pattern = SEP.join(trigger_words)
-                
-                pattern = (
-                    trigger_regex + SEP + filler_pattern + action_pattern + 
-                    SEP + r"(.+?)" + SEP + trigger_regex + SEP + filler_pattern + end_pattern
-                )
-                
-                # DEBUG: Print checking for search command to debug failure
-                if "search" in trigger:
-                    print(f"DEBUG: Checking pattern for '{trigger}' against text...")
-                    # print(f"DEBUG: Pattern: {pattern}")
-                
-                for match in re.finditer(pattern, text_lower, re.IGNORECASE):
-                    print(f"DEBUG: Found match for {trigger}!")
-                    content = match.group(1).strip()
-                    full_match = text[match.start():match.end()]
+        # Construct specific pattern for each command
+        # Format: (?:TRIGGER SEP FILLER ACTION_PATTERN ...rest)
+        patterns = []
+        
+        for cmd in sorted_commands:
+            # Handle multi-word triggers (e.g. "select all")
+            trigger_words = cmd.trigger.split()
+            action_pattern = SEP.join(re.escape(w) for w in trigger_words)
+            
+            # Base pattern: Trigger + Sep + Filler + CommandAction
+            base_pat = f"{trigger_regex}{SEP}{filler_regex}{action_pattern}"
+            
+            if cmd.requires_end:
+                 # Block Command: Base + SEP + Content + SEP + Trigger + SEP + Filler + End
+                 # Use non-greedy match for content
+                 full_pat = f"(?P<CMD_{cmd.trigger.replace(' ', '_')}>{base_pat}{SEP}(?P<CONTENT_{cmd.trigger.replace(' ', '_')}>.+?){SEP}{trigger_regex}{SEP}{filler_regex}{end_regex})"
+            else:
+                 # Instant Command: Base only
+                 # Ensure word boundary at end to avoid partial matches
+                 full_pat = f"(?P<CMD_{cmd.trigger.replace(' ', '_')}>{base_pat})(?![a-zA-Z0-9])"
+            
+            patterns.append(full_pat)
+        
+        # Combine all command patterns into one BIG regex using OR
+        combined_pattern = "|".join(patterns)
+        
+        # Collect removal/replacement spans (start, end, replacement_text)
+        replacement_spans = []
+        
+        # Iteratively find matches
+        for match in re.finditer(combined_pattern, text_lower, re.IGNORECASE):
+            # Identify which command matched
+            for name, value in match.groupdict().items():
+                if value and name.startswith("CMD_"):
+                    trigger_key = name[4:].replace('_', ' ') # Restore trigger
+                    cmd_def = self.commands.get(trigger_key)
                     
-                    # Hash to avoid re-execution
-                    match_hash = hash(full_match.lower())
-                    if match_hash not in self._executed_hashes:
-                        self._executed_hashes.add(match_hash)
+                    if cmd_def:
+                        # Deduplication using full match hash
+                        match_hash = hash(value)
                         
-                        # Get original case content from the text
-                        orig_content = text[match.start() + text_lower[match.start():].find(content.split()[0]) if content else match.start():match.end()]
-                        # Extract just the content part using action_pattern
-                        # We need to re-construct the regex parts for the inner match
-                        inner_sep = r"(?:[.,!?]+\s*|\s+)"
-                        content_match = re.search(action_pattern + inner_sep + r"(.+?)" + inner_sep + trigger_regex, orig_content, re.IGNORECASE)
-                        if content_match:
-                            orig_content = content_match.group(1).strip()
+                        if match_hash not in self._executed_hashes:
+                            print(f"DEBUG: Matched command '{trigger_key}'")
+                            self._executed_hashes.add(match_hash)
+                            
+                            # SUBSTITUTION CHECK:
+                            # If we are nested AND this command has a substitution handler,
+                            # we treat it as text substitution, NOT a command execution.
+                            if is_nested and cmd_def.substitution_handler:
+                                subst_text = cmd_def.substitution_handler()
+                                print(f"DEBUG: Substituting nested command '{trigger_key}' with clipboard content.")
+                                replacement_spans.append((*match.span(name), subst_text))
+                                continue # processing matches (don't add to matches list)
+                            
+                            
+                            content = ""
+                            if cmd_def.requires_content:
+                                content_key = f"CONTENT_{name[4:]}"
+                                content = match.groupdict().get(content_key, "").strip()
+                            
+                            # Extract original case content if possible
+                            start, end = match.span(name)
+                            full_match_orig = text[start:end]
+                            
+                            content_orig = ""
+                            if content:
+                                c_start, c_end = match.span(f"CONTENT_{name[4:]}")
+                                content_orig = text[c_start:c_end]
+                            
+                            matches.append(CommandMatch(
+                                command=cmd_def,
+                                content=content_orig,
+                                full_match=full_match_orig
+                            ))
+                            
+                            # RECURSIVE CHECK: Scan the content for nested commands
+                            if content_orig:
+                                # Recursively scan the content with is_nested=True
+                                sub_cleaned, sub_matches = self.scan_text(content_orig, is_nested=True)
+                                
+                                if sub_matches or sub_cleaned != content_orig:
+                                    # If matches found OR text substituted
+                                    print(f"DEBUG: Found nested commands/substitution inside '{trigger_key}'")
+                                    matches.extend(sub_matches)
+                                    matches[-1 - len(sub_matches)].content = sub_cleaned.strip()
+                            
+                            # Mark for removal (empty replacement)
+                            replacement_spans.append((*match.span(name), ""))
+
                         else:
-                            orig_content = content
+                            print(f"DEBUG: Skipping duplicate match for '{trigger_key}'")
                         
-                        matches.append(CommandMatch(
-                            command=cmd,
-                            content=orig_content,
-                            full_match=full_match
-                        ))
-                        
-                        # Remove from cleaned text
-                        cleaned = cleaned.replace(full_match, " ")
+                        break # Stop checking other groups for this match
+
+        # --- Cleaning / Substitution ---
+        # Sort reverse to apply changes from end to start
+        replacement_spans.sort(key=lambda x: x[0], reverse=True)
         
-        # Find immediate commands (simpler pattern)
-        # Pattern: okay [filler?] [action]
-        for trigger, cmd in self.commands.items():
-            if not cmd.requires_content:
-                # Build regex
-                filler_pattern = "(?:" + "|".join(self.FILLER_WORDS) + r")?\s*"
-                # Robust separator
-                SEP = r"(?:[.,!?]+\s*|\s+)"
-                
-                trigger_words = trigger.split()
-                action_pattern = SEP.join(trigger_words)
-                
-                pattern = trigger_regex + SEP + filler_pattern + action_pattern + r"(?:\s|$|[.,!?])"
-                
-                for match in re.finditer(pattern, cleaned.lower(), re.IGNORECASE):
-                    full_match = cleaned[match.start():match.end()].strip()
-                    
-                    match_hash = hash(full_match.lower())
-                    if match_hash not in self._executed_hashes:
-                        self._executed_hashes.add(match_hash)
-                        
-                        matches.append(CommandMatch(
-                            command=cmd,
-                            content="",
-                            full_match=full_match
-                        ))
-                        
-                        # Remove from cleaned text
-                        cleaned = cleaned[:match.start()] + " " + cleaned[match.end():]
+        for start, end, repl in replacement_spans:
+            cleaned = cleaned[:start] + repl + cleaned[end:]
         
-        # Clean up extra whitespace
+        # Clean up double spaces
         cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-        
-        # --- Aggressive Post-Cleaning ---
-        # If commands were found, the remaining text often contains hallucinations
-        # or repetitions of the command content/triggers. We remove those.
-        if matches and cleaned:
-            # 1. Remove repetitions of command content
-            for m in matches:
-                if m.content and len(m.content) > 3:
-                    # Remove content if it appears again in cleaned text
-                    # (e.g. "Okay search python" -> executes -> cleaned has "python" left)
-                    cleaned = re.sub(re.escape(m.content), "", cleaned, flags=re.IGNORECASE)
-            
-            # 2. Remove orphan non-content words (triggers, fillers, ends)
-            # Only do this if we actually found commands, to avoid false positives in normal speech
-            bad_words = self.TRIGGER_VARIATIONS.union(self.END_WORDS).union(self.FILLER_WORDS)
-            
-            # Split and filter tokens
-            tokens = cleaned.split()
-            filtered = []
-            for t in tokens:
-                # Strip punctuation for check
-                t_clean = t.lower().strip('.,!?')
-                if t_clean in bad_words:
-                    continue
-                filtered.append(t)
-            
-            cleaned = " ".join(filtered)
-            cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-            
+
         return cleaned, matches
     
     def execute_matches(self, matches: List[CommandMatch]):
@@ -254,11 +249,10 @@ class VoiceCommandDetector:
             try:
                 print(f"DEBUG: Processing match: {match.command.trigger}")
                 if match.command.requires_content:
-                    if match.content:
-                        print(f"Executing: {match.command.trigger} with content: '{match.content}'")
-                        match.command.action(match.content)
-                    else:
-                        print(f"Skipping {match.command.trigger}: no content")
+                    # Execute even if content is empty (e.g. nested command consumed it)
+                    # The action function should handle empty content gracefully
+                    print(f"Executing: {match.command.trigger} with content: '{match.content}'")
+                    match.command.action(match.content)
                 else:
                     print(f"Executing: {match.command.trigger}")
                     match.command.action()
@@ -289,6 +283,10 @@ class VoiceCommandDetector:
             url = f"https://www.google.com/search?q={urllib.parse.quote_plus(query.strip())}"
             print(f"Searching: {query}")
             webbrowser.open(url)
+        else:
+            # Default to homepage if no query
+            print("Opening browser home")
+            webbrowser.open("https://www.google.com")
     
     def _ollama_query(self, query: str):
         """Send query to Ollama (placeholder)."""

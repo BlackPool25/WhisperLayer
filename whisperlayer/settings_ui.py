@@ -224,6 +224,13 @@ class SettingsWindow(Gtk.Window):
         title.set_halign(Gtk.Align.START)
         header.pack_start(title, True, True, 0)
         
+        # Guide Button
+        guide_btn = Gtk.Button(label="Open Guide")
+        guide_btn.get_style_context().add_class("refresh-btn") # Re-use generic style or add specific
+        guide_btn.connect("clicked", self._on_open_guide)
+        guide_btn.set_tooltip_text("Open Command Guide (README)")
+        header.pack_end(guide_btn, False, False, 0)
+        
         save_btn = Gtk.Button(label="Save")
         save_btn.get_style_context().add_class("save-button")
         save_btn.connect("clicked", self._on_save)
@@ -480,11 +487,12 @@ class SettingsWindow(Gtk.Window):
     def _on_save(self, button):
         model_id = self.model_combo.get_active_id()
         if model_id:
-            self.settings.set("model", model_id, save=False, notify=False)
+            # notify=True to trigger hot-reload in app.py
+            self.settings.set("model", model_id, save=False, notify=True)
         
         for device, radio in self.device_radios.items():
             if radio.get_active():
-                self.settings.set("device", device, save=False, notify=False)
+                self.settings.set("device", device, save=False, notify=True)
                 break
         
         active_idx = self.input_combo.get_active()
@@ -492,15 +500,15 @@ class SettingsWindow(Gtk.Window):
             selected_device = self._input_devices[active_idx]
             device_id = selected_device.get('id')
             device_name = selected_device.get('friendly_name', selected_device.get('name'))
-            self.settings.set("input_device", device_name, save=False, notify=False)
-            self.settings.set("input_device_id", device_id, save=False, notify=False)
+            self.settings.set("input_device", device_name, save=False, notify=True)
+            self.settings.set("input_device_id", device_id, save=False, notify=True)
         else:
-            self.settings.set("input_device", None, save=False, notify=False)
-            self.settings.set("input_device_id", None, save=False, notify=False)
+            self.settings.set("input_device", None, save=False, notify=True)
+            self.settings.set("input_device_id", None, save=False, notify=True)
         
-        self.settings.set("hotkey", self._current_hotkey, save=False, notify=False)
-        self.settings.set("silence_duration", self.silence_scale.get_value(), save=False, notify=False)
-        self.settings.set("auto_start", self.autostart_check.get_active(), save=False, notify=False)
+        self.settings.set("hotkey", self._current_hotkey, save=False, notify=True)
+        self.settings.set("silence_duration", self.silence_scale.get_value(), save=False, notify=True)
+        self.settings.set("auto_start", self.autostart_check.get_active(), save=False, notify=True)
         
         self.settings.save()
         
@@ -508,6 +516,18 @@ class SettingsWindow(Gtk.Window):
             self.on_save()
         
         self.hide()
+        
+    def _on_open_guide(self, button):
+        """Open the online GitHub guide."""
+        import webbrowser
+        
+        url = "https://github.com/BlackPool25/WhisperLayer/blob/main/README.md"
+        
+        try:
+            print(f"Opening guide: {url}")
+            webbrowser.open(url)
+        except Exception as e:
+            print(f"Failed to open guide: {e}")
     
     def _on_delete(self, widget, event):
         self.hide()

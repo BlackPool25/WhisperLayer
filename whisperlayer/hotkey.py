@@ -22,6 +22,7 @@ class EvdevHotkeyManager:
     def __init__(self, on_toggle: Optional[Callable[[], None]] = None, hotkey: Optional[str] = None):
         self.on_toggle = on_toggle
         self._stop_event = threading.Event()
+        self._paused = False  # Pause hotkey detection without stopping thread
         self._thread: Optional[threading.Thread] = None
         self._keyboard_device = None
         
@@ -106,6 +107,7 @@ class EvdevHotkeyManager:
         """Main loop reading keyboard events from evdev."""
         import evdev
         from evdev import ecodes
+        import select
         
         # Map key names to evdev keycodes
         key_map = {
@@ -140,48 +142,59 @@ class EvdevHotkeyManager:
         active_modifiers = set()
         
         try:
-            for event in self._keyboard_device.read_loop():
-                if self._stop_event.is_set():
-                    break
+            # Use select() for non-blocking reads so we can check stop_event
+            while not self._stop_event.is_set():
+                # Wait for device to be readable with timeout
+                r, _, _ = select.select([self._keyboard_device.fd], [], [], 0.1)
+                if not r:
+                    continue  # Timeout, check stop_event again
+                
+                # Read available events (non-blocking since select said ready)
+                for event in self._keyboard_device.read():
+                    if self._stop_event.is_set():
+                        return
+                        
+                    if event.type != ecodes.EV_KEY:
+                        continue
                     
-                if event.type != ecodes.EV_KEY:
-                    continue
-                
-                # Update modifier state
-                if event.code == ecodes.KEY_LEFTCTRL or event.code == ecodes.KEY_RIGHTCTRL:
-                    if event.value in (1, 2):  # pressed or held
-                        active_modifiers.add("ctrl")
-                    else:
-                        active_modifiers.discard("ctrl")
-                elif event.code == ecodes.KEY_LEFTALT or event.code == ecodes.KEY_RIGHTALT:
-                    if event.value in (1, 2):
-                        active_modifiers.add("alt")
-                    else:
-                        active_modifiers.discard("alt")
-                elif event.code == ecodes.KEY_LEFTSHIFT or event.code == ecodes.KEY_RIGHTSHIFT:
-                    if event.value in (1, 2):
-                        active_modifiers.add("shift")
-                    else:
-                        active_modifiers.discard("shift")
-                elif event.code == ecodes.KEY_LEFTMETA or event.code == ecodes.KEY_RIGHTMETA:
-                    if event.value in (1, 2):
-                        active_modifiers.add("super")
-                    else:
-                        active_modifiers.discard("super")
-                
-                # Check for hotkey press
-                if event.code == target_key and event.value == 1:  # key down
-                    if active_modifiers == self._modifiers:
-                        if self.on_toggle:
-                            self.on_toggle()
+                    # Update modifier state
+                    if event.code == ecodes.KEY_LEFTCTRL or event.code == ecodes.KEY_RIGHTCTRL:
+                        if event.value in (1, 2):  # pressed or held
+                            active_modifiers.add("ctrl")
+                        else:
+                            active_modifiers.discard("ctrl")
+                    elif event.code == ecodes.KEY_LEFTALT or event.code == ecodes.KEY_RIGHTALT:
+                        if event.value in (1, 2):
+                            active_modifiers.add("alt")
+                        else:
+                            active_modifiers.discard("alt")
+                    elif event.code == ecodes.KEY_LEFTSHIFT or event.code == ecodes.KEY_RIGHTSHIFT:
+                        if event.value in (1, 2):
+                            active_modifiers.add("shift")
+                        else:
+                            active_modifiers.discard("shift")
+                    elif event.code == ecodes.KEY_LEFTMETA or event.code == ecodes.KEY_RIGHTMETA:
+                        if event.value in (1, 2):
+                            active_modifiers.add("super")
+                        else:
+                            active_modifiers.discard("super")
+                    
+                    # Check for hotkey press (skip if paused)
+                    if event.code == target_key and event.value == 1:  # key down
+                        if active_modifiers == self._modifiers:
+                            if self.on_toggle and not self._paused:
+                                self.on_toggle()
                             
         except Exception as e:
+            if self._stop_event.is_set():
+                # Expected error when stopping
+                return
             print(f"evdev error: {e}")
     
     def _start_pynput_fallback(self):
         """Fallback to pynput for non-evdev systems."""
         def handle_hotkey():
-            if self.on_toggle:
+            if self.on_toggle and not self._paused:
                 self.on_toggle()
         
         self._pynput_listener = keyboard.GlobalHotKeys({
@@ -190,14 +203,33 @@ class EvdevHotkeyManager:
         self._pynput_listener.start()
         print(f"Hotkey registered (pynput fallback): {self._hotkey_str}")
     
+    def pause(self):
+        """Pause hotkey detection (thread-safe, no stop/start)."""
+        self._paused = True
+    
+    def resume(self):
+        """Resume hotkey detection."""
+        self._paused = False
+    
+    def update_hotkey(self, new_hotkey: str):
+        """Update the hotkey configuration (thread-safe)."""
+        self._hotkey_str = new_hotkey
+        self._modifiers, self._main_key = self._parse_hotkey(new_hotkey)
+        print(f"Hotkey updated to: {new_hotkey}")
+    
     def stop(self):
         """Stop listening for hotkeys."""
         self._stop_event.set()
+        # Wait for the thread to exit cleanly (it checks stop_event every 0.1s)
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=0.5)
+        # Now safe to close the device
         if self._keyboard_device:
             try:
                 self._keyboard_device.close()
             except Exception:
                 pass
+            self._keyboard_device = None
         if hasattr(self, '_pynput_listener'):
             self._pynput_listener.stop()
     
@@ -230,6 +262,18 @@ class HotkeyManager:
         """Stop listening for hotkeys."""
         self._impl.stop()
     
+    def pause(self):
+        """Pause hotkey detection (thread-safe)."""
+        self._impl.pause()
+    
+    def resume(self):
+        """Resume hotkey detection."""
+        self._impl.resume()
+    
+    def update_hotkey(self, new_hotkey: str):
+        """Update the hotkey configuration (thread-safe)."""
+        self._impl.update_hotkey(new_hotkey)
+    
     def wait(self):
         """Wait for the listener to finish."""
         self._impl.wait()
@@ -242,6 +286,7 @@ class PynputHotkeyManager:
         self.on_toggle = on_toggle
         self._listener: Optional[keyboard.GlobalHotKeys] = None
         self._is_running = False
+        self._paused = False  # Pause hotkey detection without stopping
         
         # Use provided hotkey or get from settings
         from .settings import get_settings
@@ -255,7 +300,7 @@ class PynputHotkeyManager:
         self._is_running = True
         
         def handle_hotkey():
-            if self.on_toggle:
+            if self.on_toggle and not self._paused:
                 self.on_toggle()
         
         self._listener = keyboard.GlobalHotKeys({
@@ -263,6 +308,22 @@ class PynputHotkeyManager:
         })
         self._listener.start()
         print(f"Hotkey registered: {self._hotkey_str}")
+    
+    def pause(self):
+        """Pause hotkey detection (thread-safe)."""
+        self._paused = True
+    
+    def resume(self):
+        """Resume hotkey detection."""
+        self._paused = False
+    
+    def update_hotkey(self, new_hotkey: str):
+        """Update the hotkey - for pynput this requires restart but we update the string."""
+        self._hotkey_str = new_hotkey
+        # Note: pynput GlobalHotKeys doesn't support dynamic updates,
+        # but evdev (primary on Wayland) does. For X11, we'd need to restart.
+        print(f"Hotkey updated to: {new_hotkey} (pynput - may require app restart)")
+    
     
     def stop(self):
         """Stop listening for hotkeys."""

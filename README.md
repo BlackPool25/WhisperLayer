@@ -59,6 +59,54 @@ cd whisperlayer
 pip install -e .
 ```
 
+## 🎤 Voice Commands Guide
+
+Commands are triggered by saying **"Okay [Action]"**.
+
+### 1. Instant Commands
+These execute immediately. No end phrase needed.
+
+| Command | Behavior | Description |
+|---------|----------|-------------|
+| `Okay copy` | Ctrl+C | Copy selected text |
+| `Okay paste` | Ctrl+V | Paste clipboard (or substitute if nested) |
+| `Okay cut` | Ctrl+X | Cut selected text |
+| `Okay undo` | Ctrl+Z | Undo last action |
+| `Okay redo` | Ctrl+Shift+Z | Redo action |
+| `Okay select all` | Ctrl+A | Select all text |
+| `Okay delete` | Ctrl+Backspace | Delete previous word |
+| `Okay backspace` | Backspace | Delete previous character |
+| `Okay new line` | Enter | Insert new line |
+| `Okay enter` | Enter | Press Enter key |
+| `Okay tab` | Tab | Press Tab key |
+
+### 2. Block Commands
+These require content and an end phrase.
+
+**Valid End Phrases:** `done`, `stop`, `end`, `finished`, `complete`, `over`, `execute`.
+
+**Syntax:** `Okay [Command] [Content] Okay [End]`
+
+| Command | Action | Example |
+|---------|--------|---------|
+| `Okay search` | Google Search | `Okay search what is linux okay done` |
+| `Okay google` | Google Search | `Okay google weather today okay done` |
+| `Okay ollama` | Local AI Query | `Okay ollama write a poem okay done` |
+
+### 3. Advanced Features
+
+#### 🔗 Nested Substitution (Search with Paste)
+You can use `okay paste` *inside* other commands to use your clipboard content as input.
+
+- **Workflow:** Copy text -> Say `Okay search okay paste okay done`.
+- **Result:** Searches Google for the text currently in your clipboard.
+- **Why?** The system detects `okay paste` inside the search command, fetches your clipboard text, and "pastes" it into the search query before executing.
+
+#### ⛓️ Sequential Commands
+You can chain multiple commands in one breath.
+- **Example:** `Okay new line okay new line okay paste`
+- **Result:** Inserts two new lines and then pastes text.
+
 ## 🚀 Usage
 
 ### Starting WhisperLayer
