@@ -5,6 +5,7 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
 
 from .settings import get_settings, AVAILABLE_MODELS, AVAILABLE_MODEL_NAMES, DEVICE_OPTIONS, get_input_devices
+from .hotkey import get_keyboard_devices
 
 
 # Modern Light Theme - Clean, Spacious, Professional
@@ -225,6 +226,7 @@ class SettingsWindow(Gtk.Window):
         self._pressed_keys = set()
         self._current_hotkey = self.settings.hotkey
         self._input_devices = []
+        self._keyboard_devices = []
         
         self.set_default_size(500, 600)  # Slightly larger for comfort
         self.set_border_width(0)
@@ -322,6 +324,30 @@ class SettingsWindow(Gtk.Window):
         hotkey_row.pack_start(self.hotkey_button, False, False, 0)
         
         hotkey_section.pack_start(hotkey_row, False, False, 0)
+        
+        # Keyboard Input Device Section
+        keyboard_section = self._create_section("KEYBOARD INPUT DEVICE")
+        content.pack_start(keyboard_section, False, False, 0)
+        
+        keyboard_desc = Gtk.Label(label="Device used for hotkey detection")
+        keyboard_desc.get_style_context().add_class("setting-desc")
+        keyboard_desc.set_halign(Gtk.Align.START)
+        keyboard_section.pack_start(keyboard_desc, False, False, 0)
+        
+        keyboard_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        keyboard_row.set_margin_top(4)
+        
+        self.keyboard_combo = NoScrollComboBox()
+        self.keyboard_combo.set_hexpand(True)
+        keyboard_row.pack_start(self.keyboard_combo, True, True, 0)
+        
+        keyboard_refresh_btn = Gtk.Button(label="↻")
+        keyboard_refresh_btn.get_style_context().add_class("refresh-btn")
+        keyboard_refresh_btn.set_tooltip_text("Refresh keyboard device list")
+        keyboard_refresh_btn.connect("clicked", self._on_refresh_keyboards)
+        keyboard_row.pack_start(keyboard_refresh_btn, False, False, 0)
+        
+        keyboard_section.pack_start(keyboard_row, False, False, 0)
         
         # Model Section
         model_section = self._create_section("AI MODEL")
@@ -507,6 +533,26 @@ class SettingsWindow(Gtk.Window):
         if not self.input_combo.get_active_id():
             self.input_combo.set_active(0)
     
+    def _refresh_keyboard_devices(self):
+        """Refresh the keyboard device dropdown."""
+        self.keyboard_combo.remove_all()
+        self._keyboard_devices = get_keyboard_devices()
+        
+        for device in self._keyboard_devices:
+            device_path = device.get('path', '')
+            friendly_name = device.get('friendly_name', device.get('name', 'Unknown'))
+            self.keyboard_combo.append(device_path, friendly_name)
+    
+    def _on_refresh_keyboards(self, button):
+        """Handler for keyboard refresh button click."""
+        current_path = self.keyboard_combo.get_active_id()
+        self._refresh_keyboard_devices()
+        
+        if current_path:
+            self.keyboard_combo.set_active_id(current_path)
+        if not self.keyboard_combo.get_active_id():
+            self.keyboard_combo.set_active(0)
+    
     def _load_values(self):
         self._refresh_input_devices()
         
@@ -543,6 +589,14 @@ class SettingsWindow(Gtk.Window):
         self.hotkey_label.set_text(self._current_hotkey)
         self.silence_scale.set_value(self.settings.silence_duration)
         self.autostart_check.set_active(self.settings.auto_start)
+        
+        # Load keyboard device settings
+        self._refresh_keyboard_devices()
+        saved_keyboard_path = self.settings.keyboard_device
+        if saved_keyboard_path:
+            self.keyboard_combo.set_active_id(saved_keyboard_path)
+        if not self.keyboard_combo.get_active_id():
+            self.keyboard_combo.set_active(0)  # Default to auto-detect
         
         # Load Ollama settings
         self.ollama_enable_check.set_active(self.settings.ollama_enabled)
@@ -637,6 +691,18 @@ class SettingsWindow(Gtk.Window):
         self.settings.set("hotkey", self._current_hotkey, save=False, notify=True)
         self.settings.set("silence_duration", self.silence_scale.get_value(), save=False, notify=True)
         self.settings.set("auto_start", self.autostart_check.get_active(), save=False, notify=True)
+        
+        # Save keyboard device settings
+        keyboard_idx = self.keyboard_combo.get_active()
+        if keyboard_idx >= 0 and keyboard_idx < len(self._keyboard_devices):
+            selected_keyboard = self._keyboard_devices[keyboard_idx]
+            keyboard_path = selected_keyboard.get('path', '')
+            keyboard_name = selected_keyboard.get('friendly_name', selected_keyboard.get('name', ''))
+            self.settings.set("keyboard_device", keyboard_path, save=False, notify=True)
+            self.settings.set("keyboard_device_name", keyboard_name, save=False, notify=True)
+        else:
+            self.settings.set("keyboard_device", "", save=False, notify=True)
+            self.settings.set("keyboard_device_name", "", save=False, notify=True)
         
         # Save Ollama settings
         self.settings.set("ollama_enabled", self.ollama_enable_check.get_active(), save=False, notify=True)

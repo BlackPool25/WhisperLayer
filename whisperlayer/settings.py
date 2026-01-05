@@ -35,6 +35,9 @@ DEFAULTS = {
     "device": "auto",  # auto, cpu, cuda
     "input_device": None,  # None = default device (stores friendly name or id)
     "input_device_id": None,  # Actual sounddevice ID
+    "input_device_source": None,  # PulseAudio source name for reliable matching
+    "keyboard_device": "",  # Empty = auto-detect, otherwise device path like /dev/input/event3
+    "keyboard_device_name": "",  # Friendly name for display
     "hotkey": "<ctrl>+<alt>+f",
     "silence_duration": 1.5,
     "auto_start": False,
@@ -430,6 +433,17 @@ class Settings:
     @property
     def language(self) -> str:
         return self.get("language", "en")
+    
+    # Keyboard device properties
+    @property
+    def keyboard_device(self) -> str:
+        """Path to keyboard device (empty string = auto-detect)."""
+        return self.get("keyboard_device", "")
+    
+    @property
+    def keyboard_device_name(self) -> str:
+        """Friendly name of selected keyboard device."""
+        return self.get("keyboard_device_name", "")
     
     # Ollama properties
     @property

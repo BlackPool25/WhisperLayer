@@ -13,6 +13,75 @@ def is_wayland() -> bool:
     return os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
 
 
+def get_keyboard_devices() -> list[dict]:
+    """
+    Get list of available keyboard input devices for user selection.
+    Returns list of dicts with 'path', 'name', and 'friendly_name' keys.
+    
+    This function is compatible with any Linux system running evdev.
+    Gaming keyboards often expose multiple input devices (for media keys,
+    RGB control, macro keys, etc.) - all valid keyboard devices are listed.
+    """
+    devices = []
+    
+    # Add auto-detect option first
+    devices.append({
+        "path": "",  # Empty string means auto-detect
+        "name": "auto",
+        "friendly_name": "Auto-detect (recommended)",
+    })
+    
+    try:
+        import evdev
+        
+        for path in evdev.list_devices():
+            try:
+                device = evdev.InputDevice(path)
+                caps = device.capabilities()
+                
+                # Check if device has keyboard capabilities
+                if evdev.ecodes.EV_KEY in caps:
+                    keys = caps[evdev.ecodes.EV_KEY]
+                    # Must have letter keys and enter - filters out media remotes etc
+                    if evdev.ecodes.KEY_A in keys and evdev.ecodes.KEY_ENTER in keys:
+                        name_lower = device.name.lower()
+                        
+                        # Skip obvious non-keyboards
+                        skip_keywords = ['solaar', 'virtual', 'mouse', 'touchpad', 'trackpad', 
+                                        'consumer control', 'system control', 'power button', 
+                                        'sleep button', 'video bus']
+                        if any(kw in name_lower for kw in skip_keywords):
+                            continue
+                        
+                        # Extract event number from path for disambiguation
+                        # e.g., /dev/input/event5 -> event5
+                        event_num = path.split('/')[-1] if '/' in path else path
+                        
+                        # Create user-friendly name with event number
+                        friendly_name = device.name
+                        if 'keyboard' not in name_lower:
+                            friendly_name = f"{device.name} (Keyboard)"
+                        # Add event number for disambiguation when multiple same-named devices exist
+                        friendly_name = f"{friendly_name} [{event_num}]"
+                        
+                        devices.append({
+                            "path": device.path,
+                            "name": device.name,
+                            "friendly_name": friendly_name,
+                        })
+                        
+            except (PermissionError, OSError):
+                # Can't access this device, skip it
+                continue
+                
+    except ImportError:
+        print("evdev not installed - keyboard device enumeration unavailable")
+    except Exception as e:
+        print(f"Error enumerating keyboard devices: {e}")
+    
+    return devices
+
+
 class EvdevHotkeyManager:
     """
     Hotkey manager using evdev for true global hotkeys on Wayland.
@@ -52,12 +121,31 @@ class EvdevHotkeyManager:
         return modifiers, main_key
     
     def _find_keyboard_device(self):
-        """Find the keyboard input device - prefer physical keyboards."""
+        """Find the keyboard input device - uses saved setting or auto-detects."""
         try:
             import evdev
-            devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
             
-            # Priority: find actual keyboard, not virtual/software ones
+            # First, check if user has configured a specific keyboard device
+            from .settings import get_settings
+            settings = get_settings()
+            saved_device_path = settings.get("keyboard_device")
+            
+            if saved_device_path:
+                try:
+                    device = evdev.InputDevice(saved_device_path)
+                    caps = device.capabilities()
+                    # Verify it's still a keyboard
+                    if evdev.ecodes.EV_KEY in caps:
+                        keys = caps[evdev.ecodes.EV_KEY]
+                        if evdev.ecodes.KEY_A in keys and evdev.ecodes.KEY_ENTER in keys:
+                            print(f"Using saved keyboard device: {device.name} ({saved_device_path})")
+                            return device
+                except (FileNotFoundError, PermissionError, OSError) as e:
+                    print(f"Saved keyboard device not available: {e}")
+                    print("Falling back to auto-detection...")
+            
+            # Auto-detect keyboard device
+            devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
             keyboard_candidates = []
             
             for device in devices:
@@ -69,17 +157,20 @@ class EvdevHotkeyManager:
                     if evdev.ecodes.KEY_A in keys and evdev.ecodes.KEY_ENTER in keys:
                         name_lower = device.name.lower()
                         # Skip virtual/software keyboards and mice
-                        skip_keywords = ['solaar', 'virtual', 'mouse', 'touchpad', 'trackpad']
+                        skip_keywords = ['solaar', 'virtual', 'mouse', 'touchpad', 'trackpad', 
+                                         'consumer control', 'system control', 'power button']
                         if any(kw in name_lower for kw in skip_keywords):
                             continue
-                        # High priority for actual keyboards
-                        if 'evision' in name_lower or 'rgb keyboard' in name_lower:
+                        # Prioritize devices with 'keyboard' in the name
+                        if 'keyboard' in name_lower:
                             keyboard_candidates.insert(0, device)
-                        elif 'keyboard' in name_lower:
+                        else:
                             keyboard_candidates.append(device)
             
             if keyboard_candidates:
-                return keyboard_candidates[0]
+                selected = keyboard_candidates[0]
+                print(f"Auto-detected keyboard: {selected.name} ({selected.path})")
+                return selected
                 
         except Exception as e:
             print(f"Failed to find keyboard device: {e}")

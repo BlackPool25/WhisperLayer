@@ -59,6 +59,32 @@ cd whisperlayer
 pip install -e .
 ```
 
+### Updating
+
+```bash
+# Run the updater to see available releases
+./update.sh
+
+# Or automatically install the latest
+./update.sh --latest
+
+# Just list releases without installing
+./update.sh --list-only
+```
+
+### Uninstalling
+
+```bash
+# Interactive uninstall (prompts for each component)
+./uninstall.sh
+
+# Remove everything without prompts
+./uninstall.sh --all
+
+# Remove all except configuration (keep settings for reinstall)
+./uninstall.sh --all --keep-config
+```
+
 ## 🎤 Voice Commands Guide
 
 Commands are triggered by saying **"Okay [Action]"**.
