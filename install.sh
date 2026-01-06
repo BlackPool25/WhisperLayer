@@ -47,6 +47,25 @@ print_success() {
     echo -e "${GREEN}✓${NC} $1"
 }
 
+# Detect if running inside a container (Docker, Podman, etc.)
+detect_container() {
+    if [ -f /.dockerenv ]; then
+        return 0
+    fi
+    if grep -qE 'docker|lxc|containerd|podman' /proc/1/cgroup 2>/dev/null; then
+        return 0
+    fi
+    if [ -n "$container" ]; then
+        return 0
+    fi
+    return 1
+}
+
+IN_CONTAINER=false
+if detect_container; then
+    IN_CONTAINER=true
+fi
+
 # Available Whisper models
 declare -A MODELS
 MODELS=(
@@ -184,34 +203,64 @@ print_success "Model set to: $SELECTED_MODEL"
 
 # Check if user is in input group
 print_step "Checking group permissions..."
-if ! groups | grep -q input; then
-    echo ""
-    print_warning "Adding user to 'input' group (required for global hotkeys)..."
-    sudo usermod -aG input "$USER"
-    print_warning "You'll need to LOG OUT and back in for this to take effect."
+if [ "$IN_CONTAINER" = true ]; then
+    print_warning "Running in container - checking input group exists..."
+    # Create input group if it doesn't exist
+    if ! getent group input > /dev/null 2>&1; then
+        if command -v groupadd > /dev/null 2>&1; then
+            groupadd input 2>/dev/null || true
+            print_success "Created 'input' group"
+        else
+            print_warning "Cannot create 'input' group - groupadd not available"
+        fi
+    else
+        print_success "'input' group exists"
+    fi
+    # Skip adding user to group if running as root (common in containers)
+    if [ "$(id -u)" = "0" ]; then
+        print_warning "Running as root - skipping usermod (not needed in container)"
+    elif getent group input > /dev/null 2>&1; then
+        if ! groups | grep -q input; then
+            usermod -aG input "$USER" 2>/dev/null || print_warning "Could not add user to input group"
+        fi
+    fi
 else
-    print_success "User already in 'input' group"
+    if ! groups | grep -q input; then
+        echo ""
+        print_warning "Adding user to 'input' group (required for global hotkeys)..."
+        sudo usermod -aG input "$USER"
+        print_warning "You'll need to LOG OUT and back in for this to take effect."
+    else
+        print_success "User already in 'input' group"
+    fi
 fi
 
-# Set up uinput permissions
+# Set up uinput permissions (skip in containers - no udev)
 print_step "Setting up uinput permissions..."
-if [ ! -f /etc/udev/rules.d/99-uinput.rules ]; then
-    sudo bash -c 'echo "KERNEL==\"uinput\", MODE=\"0660\", GROUP=\"input\"" > /etc/udev/rules.d/99-uinput.rules'
-    sudo udevadm control --reload-rules
-    sudo udevadm trigger
-    print_success "uinput rules configured"
+if [ "$IN_CONTAINER" = true ]; then
+    print_warning "Running in container - skipping udev rules setup"
 else
-    print_success "uinput rules already exist"
+    if [ ! -f /etc/udev/rules.d/99-uinput.rules ]; then
+        sudo bash -c 'echo "KERNEL==\"uinput\", MODE=\"0660\", GROUP=\"input\"" > /etc/udev/rules.d/99-uinput.rules'
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger
+        print_success "uinput rules configured"
+    else
+        print_success "uinput rules already exist"
+    fi
 fi
 
-# Create directories
-mkdir -p "$HOME/.local/share/applications"
-mkdir -p "$HOME/.config/systemd/user"
-mkdir -p "$HOME/.config/autostart"
+# Create directories (only if not in container)
+if [ "$IN_CONTAINER" = true ]; then
+    print_warning "Running in container - skipping desktop/systemd integration"
+else
+    mkdir -p "$HOME/.local/share/applications"
+    mkdir -p "$HOME/.config/systemd/user"
+    mkdir -p "$HOME/.config/autostart"
 
-# Install desktop file
-print_step "Installing desktop launcher..."
-cat > "$DESKTOP_FILE" << EOF
+    # Install desktop file
+    print_step "Installing desktop launcher..."
+    cat > "$DESKTOP_FILE" << EOF
 [Desktop Entry]
 Name=WhisperLayer
 Comment=Speech-to-Text Voice Typing
@@ -223,11 +272,11 @@ Categories=Utility;Accessibility;
 Keywords=voice;speech;transcription;typing;stt;whisper;
 StartupNotify=false
 EOF
-print_success "Desktop launcher installed"
+    print_success "Desktop launcher installed"
 
-# Install systemd service
-print_step "Installing systemd service..."
-cat > "$SERVICE_FILE" << EOF
+    # Install systemd service
+    print_step "Installing systemd service..."
+    cat > "$SERVICE_FILE" << EOF
 [Unit]
 Description=WhisperLayer Speech-to-Text
 After=graphical-session.target
@@ -244,9 +293,10 @@ Environment=XDG_RUNTIME_DIR=/run/user/%U
 WantedBy=default.target
 EOF
 
-# Reload systemd
-systemctl --user daemon-reload 2>/dev/null || true
-print_success "Systemd service installed"
+    # Reload systemd
+    systemctl --user daemon-reload 2>/dev/null || true
+    print_success "Systemd service installed"
+fi
 
 echo ""
 echo -e "${GREEN}╔════════════════════════════════════════════╗${NC}"
@@ -259,24 +309,32 @@ echo -e "  ${BLUE}Model:${NC} $SELECTED_MODEL"
 echo -e "  ${BLUE}Hotkey:${NC} Ctrl+Alt+F (default, change in Settings)"
 echo ""
 echo "  Launch options:"
-echo "    • From Applications menu: Search 'WhisperLayer'"
-echo "    • From terminal: whisperlayer"
-echo "    • As service: systemctl --user start whisperlayer"
+if [ "$IN_CONTAINER" = true ]; then
+    echo "    • From terminal: $SCRIPT_DIR/.venv/bin/python -m whisperlayer"
+else
+    echo "    • From Applications menu: Search 'WhisperLayer'"
+    echo "    • From terminal: whisperlayer"
+    echo "    • As service: systemctl --user start whisperlayer"
+fi
 echo ""
 
-# Ask about auto-start
-echo -e "${YELLOW}═══════════════════════════════════════════════${NC}"
-read -p "Enable auto-start on login? [y/N]: " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    systemctl --user enable whisperlayer 2>/dev/null || true
-    print_success "Auto-start enabled"
+# Ask about auto-start (skip in containers)
+if [ "$IN_CONTAINER" = true ]; then
+    print_warning "Container detected - skipping auto-start setup"
 else
-    echo "  Skipped. Enable later with: systemctl --user enable whisperlayer"
+    echo -e "${YELLOW}═══════════════════════════════════════════════${NC}"
+    read -p "Enable auto-start on login? [y/N]: " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        systemctl --user enable whisperlayer 2>/dev/null || true
+        print_success "Auto-start enabled"
+    else
+        echo "  Skipped. Enable later with: systemctl --user enable whisperlayer"
+    fi
 fi
 
 echo ""
-if ! groups | grep -q input; then
+if [ "$IN_CONTAINER" != true ] && ! groups | grep -q input; then
     echo -e "${YELLOW}╔════════════════════════════════════════════╗${NC}"
     echo -e "${YELLOW}║  IMPORTANT: Please log out and back in     ║${NC}"
     echo -e "${YELLOW}║  for group permissions to take effect!     ║${NC}"
