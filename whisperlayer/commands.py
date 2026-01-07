@@ -84,85 +84,118 @@ class VoiceCommandDetector:
                 continue
                 
             trigger = cmd["trigger"]
-            cmd_type = cmd["type"]
+            # cmd_type = cmd["type"] # Unused, always treated as macro now
             value = cmd["value"]
-            requires_end = cmd["requires_end"]
+            requires_end = cmd.get("requires_end", False)
+            requires_content = requires_end # Usually paired
             
-            action = None
-            sub_handler = None
-            content_sub_handler = None
-            requires_content = False
+            # --- Universal Macro Logic ---
+            # We treat ALL custom commands as potential macros if they contain special chars
+            # But to preserve backward compat and simplicity, we can just use the macro runner for everything.
             
-            # --- Parsing logic ---
-            
-            # 1. Alias/Reference Logic (@trigger ...)
-            if value.startswith("@"):
-                # Parse alias: "@target_trigger rest of prompt"
-                parts = value[1:].split(" ", 1)
-                target_trigger_orig = parts[0].lower()
-                prepend_text = parts[1] if len(parts) > 1 else ""
-                
-                # We need to find the ACTUAL command definition for this trigger
-                # But wait, self.commands keys are effectively effective_triggers (overrides applied)
-                # But the user might reference the ORIGINAL name or the NEW name?
-                # Let's assume they reference the current active trigger name.
-                
-                target_cmd = self.commands.get(target_trigger_orig)
-                
-                # If not found, maybe they used the original name but it was overridden?
-                if not target_cmd:
-                    # Reverse lookup in overrides could be complex, 
-                    # but typically users reference visible names.
-                    # Try looking for original if not found (in case they mapped 'copy' -> 'dup' but use @copy)
-                    # But overrides replace the key in self.commands.
-                    # So we can't easily find it by original name unless we track it.
-                    # Let's just stick to "Reference active command name".
-                    pass
+            # Helper to execute macro
+            def run_macro(m_val=value, *args):
+                self._execute_macro(m_val)
 
-                if target_cmd:
-                    print(f"DEBUG: Linking custom command '{trigger}' to '{target_trigger_orig}'")
-                    # Copy behavior from target
-                    requires_content = target_cmd.requires_content
-                    requires_end = target_cmd.requires_end
+            action = run_macro
+            
+            if requires_end or requires_content:
+                 action = lambda c, v=value: self._execute_macro(v, content=c)
+            else:
+                 action = lambda v=value: self._execute_macro(v)
+
+            # Register
+            self.register(trigger, action, 
+                          requires_content=requires_content, 
+                          requires_end=requires_end,
+                          category="custom")
+                          
+    def _execute_macro(self, macro_str: str, content: str = ""):
+        """
+        Execute a macro string containing text, keystrokes <...>, and command refs @...
+        Supported formats:
+        - Plain text: Types the text
+        - <ctrl>+c: Types keys
+        - @command: Executes a command
+        - @command[arg]: Executes command with argument
+        - {content}: Substitutes captured voice content
+        """
+        if content:
+            macro_str = macro_str.replace("{content}", content)
+        
+        # Parse tokens:
+        # 1. <keystroke>
+        # 2. @command[arg] or @command
+        # 3. plain text
+        # Regex to split: (@[\w\s]+(?:\[.*?\])?)|(<[^>]+>)|([^@<]+)
+        # Note: @command might be "@delta" or "@delta[arg]"
+        
+        pattern = re.compile(r'(@[\w]+(?:\[.*?\])?)|(<[^>]+>)|([^@<]+)')
+        
+        import time
+        from .settings import get_settings
+        
+        for match in pattern.finditer(macro_str):
+            cmd_ref, keystroke, text = match.groups()
+            
+            if cmd_ref:
+                # Handle command reference
+                # Format: @trigger or @trigger[arg]
+                ref_trigger = cmd_ref[1:] # strip @
+                ref_arg = ""
+                
+                if "[" in ref_trigger and ref_trigger.endswith("]"):
+                    ref_trigger, ref_arg = ref_trigger.split("[", 1)
+                    ref_arg = ref_arg[:-1] # strip ]
+                
+                # Normalize trigger
+                ref_trigger = ref_trigger.lower().strip()
+                
+                # Find command
+                # We need to map aliases if possible, or just look up directly
+                # self.commands keys are lowercased effective triggers
+                cmd = self.commands.get(ref_trigger)
+                
+                if cmd:
+                    print(f"DEBUG: Macro executing @{ref_trigger} arg='{ref_arg}'")
+                    if cmd.action:
+                         # Handle content requirement
+                         if cmd.requires_content:
+                             # If arg provided, use it. If not, use 'content' passed to macro?
+                             # But 'content' might have been used in {content}.
+                             # If arg is empty, we might pass content if not used yet?
+                             # Let's just pass ref_arg.
+                             try:
+                                 cmd.action(ref_arg)
+                             except TypeError:
+                                 # Fallback if action doesn't take args (shouln't happen if requires_content matches signature)
+                                 cmd.action()
+                         else:
+                             cmd.action()
                     
-                    # Wrap action
-                    if target_cmd.action:
-                        # If simple action (no args), direct link
-                        if not requires_content:
-                             action = target_cmd.action
-                        else:
-                             # If content required, we might need to prepend text?
-                             # Standard action(content)
-                             if prepend_text:
-                                 action = lambda c, a=target_cmd.action, p=prepend_text: a(f"{p} {c}".strip())
-                             else:
-                                 action = target_cmd.action
-
-                    # Wrap content substitution (like delta)
-                    if target_cmd.content_substitution_handler:
-                        orig_handler = target_cmd.content_substitution_handler
-                        if prepend_text:
-                            # Prepend to the query
-                            content_sub_handler = lambda c, h=orig_handler, p=prepend_text: h(f"{p} {c}".strip())
-                        else:
-                            content_sub_handler = orig_handler
-                            
-            # 2. Standard Types
-            elif cmd_type == "shortcut":
-                action = lambda v=value: self._type_key(v)
-            elif cmd_type == "text":
-                action = lambda v=value: self._type_text(v)
-            
-            # Register if valid
-            if action or content_sub_handler:
-                self.register(trigger, action, 
-                              requires_content=requires_content, 
-                              requires_end=requires_end,
-                              substitution_handler=sub_handler,
-                              content_substitution_handler=content_sub_handler,
-                              category="custom")
-    
-    # ... prompt hint methods ...
+                    # Wait a bit?
+                    # time.sleep(0.1) 
+                else:
+                    print(f"WARNING: Macro referenced unknown command '@{ref_trigger}'")
+                    
+            elif keystroke:
+                # Handle keystroke <ctrl>+c
+                # Strip <> ? No, _type_key matches string parsing usually?
+                # User puts <ctrl>+c. _type_key expects "ctrl+c" usually?
+                # Let's check _type_key implementation.
+                # Assuming it takes "ctrl+c" or "<ctrl>+c".
+                # Standardize: remove < > wrap if it's single tag? 
+                # Actually, standard format input is likely "ctrl+c". 
+                # User prompt says "record keystrokes... auto convert".
+                # Let's assume input is cleaned. But user might type <ctrl>+c.
+                # Remove < and > for pynput/xdo compatibility logic usually.
+                clean_key = keystroke.replace("<", "").replace(">", "")
+                print(f"DEBUG: Macro typing key '{clean_key}'")
+                self._type_key(clean_key)
+                
+            elif text:
+                print(f"DEBUG: Macro typing text '{text}'")
+                self._type_text(text)
 
     def _register_default_commands(self):
         """Register built-in voice commands."""

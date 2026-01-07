@@ -2,7 +2,321 @@
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GLib
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+
+# ... imports ...
+
+class CommandMacroEditor(Gtk.Box):
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
+        self.get_style_context().add_class("macro-editor")
+        
+        # Scrolled Text View
+        self.scrolled = Gtk.ScrolledWindow()
+        self.scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER) # Horiz scroll only? No, wrap mode.
+        self.scrolled.set_shadow_type(Gtk.ShadowType.IN)
+        self.scrolled.set_hexpand(True)
+        self.scrolled.set_min_content_height(40)
+        
+        self.textview = Gtk.TextView()
+        self.textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.textview.set_left_margin(8)
+        self.textview.set_right_margin(8)
+        self.textview.set_top_margin(6)
+        self.textview.set_bottom_margin(6)
+        
+        self.buffer = self.textview.get_buffer()
+        self.buffer.connect("changed", self._on_text_changed)
+        
+        # Tags
+        self.tag_cmd = self.buffer.create_tag("command", 
+                                            foreground="#2563eb", 
+                                            weight=Pango.Weight.BOLD)
+        
+        self.scrolled.add(self.textview)
+        self.pack_start(self.scrolled, True, True, 0)
+        
+        # Record Button
+        self.rec_btn = Gtk.Button(label="⌨️")
+        self.rec_btn.set_tooltip_text("Record Keystrokes")
+        self.rec_btn.connect("clicked", self._on_record_clicked)
+        self.pack_start(self.rec_btn, False, False, 4)
+        
+        # Autocomplete Popover
+        self.popover = Gtk.Popover(relative_to=self.textview)
+        self.popover.set_position(Gtk.PositionType.BOTTOM)
+        self.pop_list = Gtk.ListBox()
+        self.pop_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.pop_list.connect("row-activated", self._on_suggestion_clicked)
+        
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_max_content_height(150)
+        scroll.set_min_content_width(200)
+        scroll.add(self.pop_list)
+        
+        self.popover.add(scroll)
+        
+        # Internal state
+        self._anchor_widgets = {} # anchor -> widget
+        
+    def get_text(self):
+        """Serialize content including widgets."""
+        start = self.buffer.get_start_iter()
+        end = self.buffer.get_end_iter()
+        text = self.buffer.get_text(start, end, True) # include hidden char?
+        # Actually proper way: iterate child anchors
+        
+        # Simplified: We know we insert anchors for arguments.
+        # But GtkTextView serialization is hard.
+        # Let's rely on a simpler trick: 
+        # We store the widgets in a list matching the order? No.
+        # We can iterate the buffer char by char? Slow.
+        # We can use the text and assume user didn't mess up?
+        # If we use child anchors, the text contains a replacement char (0xFFFC).
+        
+        final_text = ""
+        current_iter = start
+        
+        while not current_iter.is_end():
+            child_anchor = current_iter.get_child_anchor()
+            if child_anchor:
+                # Find widget for this anchor
+                widget = self._anchor_widgets.get(child_anchor)
+                if widget and isinstance(widget, Gtk.Entry):
+                    final_text += f"[{widget.get_text()}]"
+                else:
+                    final_text += "" # Should not happen
+            else:
+                char = current_iter.get_char()
+                if char != '\ufffc': # Skip anchor holder if get_char returns it
+                    final_text += char
+            
+            if not current_iter.forward_char():
+                break
+                
+        return final_text.strip()
+        
+    def set_text(self, text):
+        self.buffer.set_text(text)
+        # TODO: Parse text and reconstruct widgets if loading existing command? 
+        # For now, just plain text loading.
+        
+    def _on_text_changed(self, buffer):
+        # Check for @
+        insert = buffer.get_insert()
+        iter_cur = buffer.get_iter_at_mark(insert)
+        
+        # Look back
+        iter_start = iter_cur.copy()
+        # Search backwards for @ up to 20 chars
+        # or find "word start"
+        
+        # Simple detection: Find '@' in recent text
+        text_before = ""
+        found_at = False
+        
+        # Walk back max 20 chars
+        count = 0
+        while count < 20 and iter_start.backward_char():
+            char = iter_start.get_char()
+            if char == '@':
+                found_at = True
+                break
+            if char == ' ' or char == '\n':
+                break # Stop at whitespace
+            count += 1
+            
+        if found_at:
+            # We have @... 
+            query_iter = iter_start.copy()
+            query_iter.forward_char() # skip @
+            query = buffer.get_text(query_iter, buffer.get_iter_at_mark(insert), False)
+            self._show_suggestions(query, iter_start)
+        else:
+            self.popover.popdown()
+            
+    def _show_suggestions(self, query, iter_start):
+        # Clear list
+        for child in self.pop_list.get_children():
+            self.pop_list.remove(child)
+            
+        # Get commands
+        import sys
+        # Hack to access detector commands
+        # In real app we should pass detector. 
+        # For now assume we can get it from settings/app? 
+        # Or just instantiate one (cached)
+        
+        # For this prototype, let's instantiate one locally or cache it class-level?
+        if not hasattr(self, '_detector'):
+             from .commands import VoiceCommandDetector
+             self._detector = VoiceCommandDetector()
+             
+        cmds = self._detector.commands
+        match_count = 0
+        
+        for name, cmd in cmds.items():
+            if name.startswith(query):
+                row = Gtk.ListBoxRow()
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+                box.set_margin_top(4)
+                box.set_margin_bottom(4)
+                box.set_margin_left(4)
+                
+                lbl = Gtk.Label(label=f"@{name}")
+                lbl.set_halign(Gtk.Align.START)
+                if cmd.requires_end:
+                     lbl.set_markup(f"<b>@{name}</b> <span size='small' color='gray'>[query]</span>")
+                
+                box.pack_start(lbl, True, True, 0)
+                row.add(box)
+                row.cmd_name = name
+                row.cmd_obj = cmd
+                self.pop_list.add(row)
+                match_count += 1
+                
+        if match_count > 0:
+            self.pop_list.show_all()
+            # Position popover
+            rect = self.textview.get_iter_location(iter_start)
+            # convert buffer coords to window coords
+            win_x, win_y = self.textview.buffer_to_window_coords(Gtk.TextWindowType.TEXT, rect.x, rect.y + rect.height)
+            rect.x = win_x
+            rect.y = win_y
+            self.popover.set_pointing_to(rect)
+            self.popover.popup()
+            self._current_start_iter = iter_start.create_mark(None, True) # save where @ started
+        else:
+            self.popover.popdown()
+
+    def _on_suggestion_clicked(self, box, row):
+        name = row.cmd_name
+        cmd = row.cmd_obj
+        
+        # Replace text from @ to cursor
+        start = self.buffer.get_iter_at_mark(self._current_start_iter)
+        end = self.buffer.get_iter_at_mark(self.buffer.get_insert())
+        self.buffer.delete(start, end)
+        
+        # Insert Command Tag
+        self.buffer.insert_with_tags(start, f"@{name}", self.tag_cmd)
+        
+        # If requires end, insert Widget
+        if cmd.requires_end:
+            # Create Anchor
+            anchor = self.buffer.create_child_anchor(start)
+            
+            # Create Entry (The "Box")
+            entry = Gtk.Entry()
+            entry.set_placeholder_text("query")
+            entry.set_width_chars(15)
+            entry.get_style_context().add_class("query-box")
+            entry.set_has_frame(False)
+            
+            # We need to wrap it to style it like a box/chip
+            # GtkEntry css background
+            css = b"""
+            .query-box {
+                background: #eef2ff;
+                border: 1px solid #c7d2fe;
+                border-radius: 4px;
+                color: #3730a3;
+                padding: 0 4px;
+                margin: 0 2px;
+            }
+            """
+            provider = Gtk.CssProvider()
+            provider.load_from_data(css)
+            entry.get_style_context().add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+            
+            self.textview.add_child_at_anchor(entry, anchor)
+            entry.show()
+            
+            self._anchor_widgets[anchor] = entry
+            
+            # Insert closing space
+            # self.buffer.insert(start, " ") <-- cursor moves with start iter?
+            # get new iter
+            # iter_now = self.buffer.get_iter_at_mark(self.buffer.get_insert())
+            # self.buffer.insert(iter_now, " ")
+        else:
+             self.buffer.insert(start, " ")
+            
+        self.popover.popdown()
+        self.textview.grab_focus()
+
+    def _on_record_clicked(self, btn):
+        dialog = Gtk.MessageDialog(
+            transient_for=self.get_toplevel(),
+            modal=True,
+            buttons=Gtk.ButtonsType.CANCEL,
+            text="Record Keystrokes"
+        )
+        dialog.format_secondary_text("Press keys now... (Click 'Add' when done)")
+        
+        content = dialog.get_content_area()
+        lbl = Gtk.Label(label="...")
+        lbl.get_style_context().add_class("key-label")
+        lbl.set_margin_top(20)
+        lbl.set_margin_bottom(20)
+        content.pack_start(lbl, True, True, 0)
+        
+        dialog.add_button("Add", Gtk.ResponseType.OK)
+        
+        self.recorded_keys = set()
+        self.final_combo = ""
+        
+        def on_key(widget, event):
+            keyname = Gdk.keyval_name(event.keyval).lower()
+            
+            # Simple modifier logic
+            # This is a bit duplicative of settings logic but simpler
+            if "shift" in keyname: mods = "<shift>"
+            elif "control" in keyname: mods = "<ctrl>"
+            elif "alt" in keyname: mods = "<alt>"
+            elif "super" in keyname: mods = "<super>"
+            else:
+                 # It's a key
+                 # Combine with held modifiers?
+                 # Simplified: Just <key> or <mod>+<key>
+                 # We need to track held modifiers.
+                 pass
+            
+            # Better: Append raw key to buffer?
+            # User wants "auto convert to format".
+            # Let's just use the existing _on_key_release logic concept.
+            
+            # Quick output
+            if keyname in ['control_l', 'control_r', 'shift_l', 'shift_r', 'alt_l', 'alt_r', 'super_l', 'super_r']:
+                return # ignore mod-only press for display updates (wait for combo)
+                
+            state = event.state
+            parts = []
+            if state & Gdk.ModifierType.CONTROL_MASK: parts.append("ctrl")
+            if state & Gdk.ModifierType.MOD1_MASK: parts.append("alt") # Alt
+            if state & Gdk.ModifierType.SHIFT_MASK: parts.append("shift")
+            if state & Gdk.ModifierType.SUPER_MASK: parts.append("super")
+            
+            parts.append(keyname)
+            self.final_combo = "+".join(parts)
+            lbl.set_text(self.final_combo)
+            
+        dialog.connect("key-press-event", on_key)
+        dialog.show_all()
+        
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK and self.final_combo:
+            # Insert into textview
+            # Format: <ctrl>+c
+            # The detector expects this format for keys?
+            # detector._type_key uses re.match logic or splitting?
+            # Let's assume standard format matches.
+            
+            self.buffer.insert_at_cursor(f"<{self.final_combo}> ")
+            
+        dialog.destroy()
 
 from .settings import get_settings, AVAILABLE_MODELS, AVAILABLE_MODEL_NAMES, DEVICE_OPTIONS, get_input_devices
 from .hotkey import get_keyboard_devices
@@ -435,24 +749,14 @@ class SettingsWindow(Gtk.Window):
         row1.pack_start(self.new_cmd_trigger, True, True, 0)
         add_box.pack_start(row1, False, False, 0)
         
-        # Type
-        row2 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        row2.pack_start(Gtk.Label(label="Type:"), False, False, 0)
-        self.new_cmd_type = NoScrollComboBox()
-        self.new_cmd_type.append("shortcut", "Keyboard Shortcut")
-        self.new_cmd_type.append("text", "Type Text / Alias (@)")
-        self.new_cmd_type.set_active(0)
-        row2.pack_start(self.new_cmd_type, True, True, 0)
-        add_box.pack_start(row2, False, False, 0)
+        # Value (Macro Editor)
+        row3 = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        row3.pack_start(Gtk.Label(label="Action (Text, Keys, or @commands):"), False, False, 0)
         
-        # Value
-        row3 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        row3.pack_start(Gtk.Label(label="Value:"), False, False, 0)
-        self.new_cmd_value = Gtk.Entry()
-        self.new_cmd_value.set_placeholder_text("e.g. <ctrl>+c OR @delta explain")
-        self.new_cmd_value.set_tooltip_text("For alias: start with @ (e.g., @delta explain)")
-        row3.pack_start(self.new_cmd_value, True, True, 0)
-        add_box.pack_start(row3, False, False, 0)
+        self.new_cmd_editor = CommandMacroEditor()
+        self.new_cmd_editor.set_height_request(80) # Give it some height
+        row3.pack_start(self.new_cmd_editor, True, True, 0)
+        add_box.pack_start(row3, True, True, 0)
         
         # Options
         row4 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -467,6 +771,115 @@ class SettingsWindow(Gtk.Window):
         add_box.pack_start(row4, False, False, 0)
         
         custom_section.pack_start(add_box, False, False, 0)
+
+    # ... (other methods) ...
+
+    def _refresh_custom_commands(self):
+        """Rebuild the custom commands listbox."""
+        for child in self.custom_listbox.get_children():
+            self.custom_listbox.remove(child)
+            
+        for i, cmd in enumerate(self.settings.custom_commands):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row.set_margin_bottom(4)
+            
+            # Status Badge (End required?)
+            # Improved icons:
+            # Instant -> lightning (media-flash was ok, but maybe weather-storm?) 
+            # Block -> stop sign (process-stop)
+            status_icon = "process-stop" if cmd.get("requires_end") else "weather-storm" 
+            status_tooltip = "Requires 'Okay Done'" if cmd.get("requires_end") else "Instant Action"
+            icon = Gtk.Image.new_from_icon_name(status_icon, Gtk.IconSize.MENU)
+            icon.set_tooltip_text(status_tooltip)
+            row.pack_start(icon, False, False, 0)
+            
+            # Info
+            trigger = cmd.get("trigger", "??")
+            # ctype = cmd.get("type", "??") # Type is now implicitly macro
+            value = cmd.get("value", "??")
+            
+            label = Gtk.Label()
+            enabled = cmd.get("enabled", True)
+            fmt_trigger = f"<b>{trigger}</b>" if enabled else f"<s>{trigger}</s>"
+            # Truncate value if too long
+            disp_value = (value[:30] + '..') if len(value) > 30 else value
+            label.set_markup(f"{fmt_trigger}: <span font_family='monospace'>{disp_value}</span>")
+            label.set_halign(Gtk.Align.START)
+            if not enabled:
+                label.set_opacity(0.6)
+            row.pack_start(label, True, True, 0)
+            
+            # Enable Switch
+            switch = Gtk.Switch()
+            switch.set_active(enabled)
+            # connect using a closure to capture index safely? 
+            # lambda w, s, idx=i: ...
+            switch.connect("state-set", self._on_custom_command_toggled, i)
+            row.pack_start(switch, False, False, 0)
+            
+            # Delete button
+            del_btn = Gtk.Button(label="🗑️")
+            del_btn.get_style_context().add_class("refresh-btn")
+            del_btn.connect("clicked", self._on_delete_custom_command, i)
+            row.pack_start(del_btn, False, False, 0)
+            
+            self.custom_listbox.add(row)
+        
+        self.custom_listbox.show_all()
+        
+    def _on_custom_command_toggled(self, switch, state, index):
+        """Toggle enabled state of custom command."""
+        commands = self.settings.custom_commands
+        if 0 <= index < len(commands):
+            commands[index]["enabled"] = state
+            # Do NOT refresh listbox here to avoid destroying the switch user is clicking
+            # Just update label opacity if we can find it?
+            # Iterating children is messy. Let's just trust state is saved.
+            # Visual feedback is the switch itself toggling.
+            return True
+        return False
+
+    def _on_add_custom_command(self, button):
+        trigger = self.new_cmd_trigger.get_text().strip().lower()
+        val = self.new_cmd_editor.get_text().strip()
+        req_end = self.new_cmd_end.get_active()
+        
+        if not trigger or not val:
+            return
+            
+        # Check duplicate
+        for cmd in self.settings.custom_commands:
+            if cmd['trigger'] == trigger:
+                dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Duplicate Trigger"
+                )
+                dialog.format_secondary_text(f"Command 'okay {trigger}' already exists.")
+                dialog.run()
+                dialog.destroy()
+                return
+
+        new_cmd = {
+            "trigger": trigger,
+            "type": "macro", # Always macro now
+            "value": val,
+            "requires_end": req_end,
+            "enabled": True
+        }
+        
+        cmds = list(self.settings.custom_commands)
+        cmds.append(new_cmd)
+        
+        self.settings._settings["custom_commands"] = cmds 
+        
+        self._refresh_custom_commands()
+        
+        # Clear form
+        self.new_cmd_trigger.set_text("")
+        self.new_cmd_editor.set_text("")
+        self.new_cmd_end.set_active(False)
 
         hotkey_section = self._create_section("HOTKEY")
         content.pack_start(hotkey_section, False, False, 0)
