@@ -321,48 +321,84 @@ class SettingsWindow(Gtk.Window):
         commands_section = self._create_section("SYSTEM COMMANDS")
         content.pack_start(commands_section, False, False, 0)
         
-        cmd_desc = Gtk.Label(label="Enable or disable built-in voice commands")
+        cmd_desc = Gtk.Label(label="Manage triggers and built-in commands")
         cmd_desc.get_style_context().add_class("setting-desc")
         cmd_desc.set_halign(Gtk.Align.START)
         commands_section.pack_start(cmd_desc, False, False, 0)
         
-        self.commands_listbox = Gtk.ListBox()
-        self.commands_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.commands_listbox.get_style_context().add_class("section-box") # Re-use box style for background
-        # Actually better to just list them directly in the box
+        # Scrolled Expander
+        self.built_in_switches = {} # Map original_trigger -> switch
+        self.built_in_entries = {}  # Map original_trigger -> entry
         
-        # Scrolled window for commands if list is long? 
-        # Let's put them in a dedicated expanded (revealer) area or just a few key ones?
-        # There are about 15 commands. 
-        # Let's verify how many.
-        # Instantiating detector to get list
+        # Instantiate detector to get defaults
         from .commands import VoiceCommandDetector
-        self.detector = VoiceCommandDetector() # Temporary instance to get commands
-        self.built_in_switches = {}
+        self.detector = VoiceCommandDetector() 
+        # Note: detector.commands has EFFECTIVE triggers. We want triggers from registry without overrides logic 
+        # effectively, need to access the defaults which are hardcoded in _register_default_commands.
+        # But we can reconstruct it by iterating commands and checking overrides.
         
-        # Sort by trigger
-        sorted_cmds = sorted(self.detector.commands.values(), key=lambda c: c.trigger)
+        # Actually easier: The detector has 'category' field.
+        # But detector keys are EFFECTIVE triggers.
+        # We need the ORIGINAL mapping.
+        # Since overrides replace the key, we don't have the original key in self.commands easily if we look at detector alone.
+        # Workaround: Re-instantiate detector with MOCKED settings that has empty overrides?
+        # A bit hacky but guarantees we get canonical list.
+        class MockSettings:
+             builtin_overrides = {}
+             disabled_commands = []
+             custom_commands = []
+             ollama_enabled = False # avoid checks
         
-        # Create a grid/flowbox or just vertical list
+        # Temporarily patch settings for detector to get base commands
+        import sys
+        real_settings_mod = sys.modules['whisperlayer.settings']
+        sys.modules['whisperlayer.settings'] = type('obj', (object,), {'get_settings': lambda: MockSettings()})
+        base_detector = VoiceCommandDetector()
+        sys.modules['whisperlayer.settings'] = real_settings_mod # Restore
+        
+        sorted_cmds = sorted(base_detector.commands.values(), key=lambda c: c.trigger)
+        
         cmds_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         
         for cmd in sorted_cmds:
             if cmd.category == "custom": continue
             
-            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            label = Gtk.Label(label=f"Okay {cmd.trigger}")
-            label.set_halign(Gtk.Align.START)
-            row.pack_start(label, True, True, 0)
+            orig_trigger = cmd.trigger
+            current_trigger = self.settings.builtin_overrides.get(orig_trigger, orig_trigger)
             
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            
+            # Status Badge (End required?)
+            status_icon = "media-playlist-repeat" if cmd.requires_end else "media-flash"
+            status_tooltip = "Wait for 'Okay Done'" if cmd.requires_end else "Immediate Action"
+            icon = Gtk.Image.new_from_icon_name(status_icon, Gtk.IconSize.MENU)
+            icon.set_tooltip_text(status_tooltip)
+            row.pack_start(icon, False, False, 0)
+            
+            # Label (Original Name)
+            # label = Gtk.Label(label=orig_trigger.title())
+            # label.set_halign(Gtk.Align.START)
+            # label.set_width_chars(15)
+            # row.pack_start(label, False, False, 0)
+            
+            # Entry (Editable Trigger)
+            entry = Gtk.Entry()
+            entry.set_text(current_trigger)
+            entry.set_width_chars(20)
+            entry.connect("focus-out-event", self._on_builtin_trigger_changed, orig_trigger)
+            entry.connect("activate", lambda w, t=orig_trigger: self._on_builtin_trigger_changed(w, None, t))
+            self.built_in_entries[orig_trigger] = entry
+            row.pack_start(entry, True, True, 0)
+            
+            # Switch (Enable/Disable)
             switch = Gtk.Switch()
-            switch.set_active(cmd.trigger not in self.settings.disabled_commands)
-            switch.connect("state-set", self._on_command_toggled, cmd.trigger)
-            self.built_in_switches[cmd.trigger] = switch
+            switch.set_active(orig_trigger not in self.settings.disabled_commands)
+            switch.connect("state-set", self._on_command_toggled, orig_trigger)
+            self.built_in_switches[orig_trigger] = switch
             row.pack_start(switch, False, False, 0)
             
             cmds_box.pack_start(row, False, False, 0)
             
-        # Wrap in Expander to save space
         self.cmds_expander = Gtk.Expander(label="Manage System Commands")
         self.cmds_expander.add(cmds_box)
         commands_section.pack_start(self.cmds_expander, False, False, 0)
@@ -371,7 +407,7 @@ class SettingsWindow(Gtk.Window):
         custom_section = self._create_section("CUSTOM COMMANDS")
         content.pack_start(custom_section, False, False, 0)
         
-        custom_desc = Gtk.Label(label="Add your own voice commands")
+        custom_desc = Gtk.Label(label="Add commands or references (e.g. Value '@delta write code')")
         custom_desc.get_style_context().add_class("setting-desc")
         custom_desc.set_halign(Gtk.Align.START)
         custom_section.pack_start(custom_desc, False, False, 0)
@@ -379,12 +415,11 @@ class SettingsWindow(Gtk.Window):
         # List of custom commands
         self.custom_listbox = Gtk.ListBox()
         self.custom_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
-        # self.custom_listbox.get_style_context().add_class("section-box") 
         custom_section.pack_start(self.custom_listbox, False, False, 0)
         
         # Add New Command Form
         add_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        add_box.get_style_context().add_class("section-box") # Inner box style
+        add_box.get_style_context().add_class("section-box")
         add_box.set_margin_top(10)
         
         add_title = Gtk.Label(label="Add New Command")
@@ -396,7 +431,7 @@ class SettingsWindow(Gtk.Window):
         row1 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         row1.pack_start(Gtk.Label(label="Trigger: Okay..."), False, False, 0)
         self.new_cmd_trigger = Gtk.Entry()
-        self.new_cmd_trigger.set_placeholder_text("e.g. open terminal")
+        self.new_cmd_trigger.set_placeholder_text("e.g. explain code")
         row1.pack_start(self.new_cmd_trigger, True, True, 0)
         add_box.pack_start(row1, False, False, 0)
         
@@ -405,8 +440,7 @@ class SettingsWindow(Gtk.Window):
         row2.pack_start(Gtk.Label(label="Type:"), False, False, 0)
         self.new_cmd_type = NoScrollComboBox()
         self.new_cmd_type.append("shortcut", "Keyboard Shortcut")
-        self.new_cmd_type.append("text", "Type Text")
-        # self.new_cmd_type.append("delta", "AI Request") # TODO: Add later
+        self.new_cmd_type.append("text", "Type Text / Alias (@)")
         self.new_cmd_type.set_active(0)
         row2.pack_start(self.new_cmd_type, True, True, 0)
         add_box.pack_start(row2, False, False, 0)
@@ -415,18 +449,19 @@ class SettingsWindow(Gtk.Window):
         row3 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         row3.pack_start(Gtk.Label(label="Value:"), False, False, 0)
         self.new_cmd_value = Gtk.Entry()
-        self.new_cmd_value.set_placeholder_text("e.g. <ctrl>+<alt>+t")
+        self.new_cmd_value.set_placeholder_text("e.g. <ctrl>+c OR @delta explain")
+        self.new_cmd_value.set_tooltip_text("For alias: start with @ (e.g., @delta explain)")
         row3.pack_start(self.new_cmd_value, True, True, 0)
         add_box.pack_start(row3, False, False, 0)
         
         # Options
         row4 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         self.new_cmd_end = Gtk.CheckButton(label="Require 'Okay Done'?")
-        self.new_cmd_end.set_active(False) # Default instant
+        self.new_cmd_end.set_active(False)
         row4.pack_start(self.new_cmd_end, False, False, 0)
         
         add_btn = Gtk.Button(label="Add Command")
-        add_btn.get_style_context().add_class("save-button") # Blue style
+        add_btn.get_style_context().add_class("save-button")
         add_btn.connect("clicked", self._on_add_custom_command)
         row4.pack_end(add_btn, False, False, 0)
         add_box.pack_start(row4, False, False, 0)
@@ -869,11 +904,21 @@ class SettingsWindow(Gtk.Window):
         self.settings.set("ollama_system_prompt", prompt_text, save=False, notify=True)
         
         # Save disabled commands
+        # Save disabled commands and overrides
         disabled = []
+        overrides = {}
+        
         for trigger, switch in self.built_in_switches.items():
             if not switch.get_active():
                 disabled.append(trigger)
+                
+        for trigger, entry in self.built_in_entries.items():
+            new_val = entry.get_text().strip().lower()
+            if new_val and new_val != trigger:
+                overrides[trigger] = new_val
+                
         self.settings.set("disabled_commands", disabled, save=False, notify=True)
+        self.settings.set("builtin_overrides", overrides, save=False, notify=True)
         
         # Custom Commands already updated in memory list, just trigger save
         # self.settings.set("custom_commands", ...) # unnecessary if we modified inplace
@@ -918,8 +963,13 @@ class SettingsWindow(Gtk.Window):
         # Actually easier to just read all switches on Save.
         pass
 
+    def _on_builtin_trigger_changed(self, widget, event, orig_trigger):
+        """Handle renaming a builtin command trigger."""
+        # We handle actual saving in _on_save
+        pass
+
     def _refresh_custom_commands(self):
-        """Refresh the custom commands listbox."""
+        """Rebuild the custom commands listbox."""
         for child in self.custom_listbox.get_children():
             self.custom_listbox.remove(child)
             
@@ -927,15 +977,33 @@ class SettingsWindow(Gtk.Window):
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
             row.set_margin_bottom(4)
             
+            # Status Badge (End required?)
+            status_icon = "media-playlist-repeat" if cmd.get("requires_end") else "media-flash"
+            status_tooltip = "Wait for 'Okay Done'" if cmd.get("requires_end") else "Immediate Action"
+            icon = Gtk.Image.new_from_icon_name(status_icon, Gtk.IconSize.MENU)
+            icon.set_tooltip_text(status_tooltip)
+            row.pack_start(icon, False, False, 0)
+            
             # Info
             trigger = cmd.get("trigger", "??")
             ctype = cmd.get("type", "??")
             value = cmd.get("value", "??")
             
             label = Gtk.Label()
-            label.set_markup(f"<b>{trigger}</b> ({ctype}): <i>{value}</i>")
+            # Mark disabled with strikethrough or grey
+            enabled = cmd.get("enabled", True)
+            fmt_trigger = f"<b>{trigger}</b>" if enabled else f"<s>{trigger}</s>"
+            label.set_markup(f"{fmt_trigger} ({ctype}): <i>{value}</i>")
             label.set_halign(Gtk.Align.START)
+            if not enabled:
+                label.set_opacity(0.6)
             row.pack_start(label, True, True, 0)
+            
+            # Enable Switch
+            switch = Gtk.Switch()
+            switch.set_active(enabled)
+            switch.connect("state-set", self._on_custom_command_toggled, i)
+            row.pack_start(switch, False, False, 0)
             
             # Delete button
             del_btn = Gtk.Button(label="🗑️")
@@ -946,9 +1014,19 @@ class SettingsWindow(Gtk.Window):
             self.custom_listbox.add(row)
         
         self.custom_listbox.show_all()
+        
+    def _on_custom_command_toggled(self, switch, state, index):
+        """Toggle enabled state of custom command."""
+        commands = self.settings.custom_commands
+        if 0 <= index < len(commands):
+            commands[index]["enabled"] = state
+            # Not saving to file yet, just updating object
+            self._refresh_custom_commands() # To update label style
+            return True
+        return False
 
     def _on_add_custom_command(self, button):
-        trigger = self.new_cmd_trigger.get_text().strip()
+        trigger = self.new_cmd_trigger.get_text().strip().lower()
         val = self.new_cmd_value.get_text().strip()
         ctype = self.new_cmd_type.get_active_id()
         req_end = self.new_cmd_end.get_active()
@@ -956,6 +1034,20 @@ class SettingsWindow(Gtk.Window):
         if not trigger or not val:
             return
             
+        # Check duplicate
+        for cmd in self.settings.custom_commands:
+            if cmd['trigger'] == trigger:
+                dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Duplicate Trigger"
+                )
+                dialog.format_secondary_text(f"Command 'okay {trigger}' already exists.")
+                dialog.run()
+                dialog.destroy()
+                return
+
         new_cmd = {
             "trigger": trigger,
             "type": ctype,
@@ -967,23 +1059,15 @@ class SettingsWindow(Gtk.Window):
         cmds = list(self.settings.custom_commands)
         cmds.append(new_cmd)
         
-        # Save immediately (or should we wait for Save button? 
-        # UI implies Save button handles everything, but list updates are complex state.
-        # Let's update settings object but set save=False until main Save.
-        # Limitation: If user adds command, then closes without saving, Settings object is modified.
-        # Correct approach: Keep local list until save. 
-        # But settings.custom_commands is a property returning a copy? 
-        # settings.get returns reference to list in dict. 
-        # So modifying it modifies the singleton.
-        # We'll save to file on main Save.)
-        
-        self.settings._settings["custom_commands"] = cmds # Direct modify
+        # Direct modify of singleton list
+        self.settings._settings["custom_commands"] = cmds 
         
         self._refresh_custom_commands()
         
         # Clear form
         self.new_cmd_trigger.set_text("")
         self.new_cmd_value.set_text("")
+        self.new_cmd_end.set_active(False)
 
     def _on_delete_custom_command(self, button, index):
         cmds = list(self.settings.custom_commands)

@@ -93,25 +93,67 @@ class VoiceCommandDetector:
             content_sub_handler = None
             requires_content = False
             
-            if cmd_type == "shortcut":
+            # --- Parsing logic ---
+            
+            # 1. Alias/Reference Logic (@trigger ...)
+            if value.startswith("@"):
+                # Parse alias: "@target_trigger rest of prompt"
+                parts = value[1:].split(" ", 1)
+                target_trigger_orig = parts[0].lower()
+                prepend_text = parts[1] if len(parts) > 1 else ""
+                
+                # We need to find the ACTUAL command definition for this trigger
+                # But wait, self.commands keys are effectively effective_triggers (overrides applied)
+                # But the user might reference the ORIGINAL name or the NEW name?
+                # Let's assume they reference the current active trigger name.
+                
+                target_cmd = self.commands.get(target_trigger_orig)
+                
+                # If not found, maybe they used the original name but it was overridden?
+                if not target_cmd:
+                    # Reverse lookup in overrides could be complex, 
+                    # but typically users reference visible names.
+                    # Try looking for original if not found (in case they mapped 'copy' -> 'dup' but use @copy)
+                    # But overrides replace the key in self.commands.
+                    # So we can't easily find it by original name unless we track it.
+                    # Let's just stick to "Reference active command name".
+                    pass
+
+                if target_cmd:
+                    print(f"DEBUG: Linking custom command '{trigger}' to '{target_trigger_orig}'")
+                    # Copy behavior from target
+                    requires_content = target_cmd.requires_content
+                    requires_end = target_cmd.requires_end
+                    
+                    # Wrap action
+                    if target_cmd.action:
+                        # If simple action (no args), direct link
+                        if not requires_content:
+                             action = target_cmd.action
+                        else:
+                             # If content required, we might need to prepend text?
+                             # Standard action(content)
+                             if prepend_text:
+                                 action = lambda c, a=target_cmd.action, p=prepend_text: a(f"{p} {c}".strip())
+                             else:
+                                 action = target_cmd.action
+
+                    # Wrap content substitution (like delta)
+                    if target_cmd.content_substitution_handler:
+                        orig_handler = target_cmd.content_substitution_handler
+                        if prepend_text:
+                            # Prepend to the query
+                            content_sub_handler = lambda c, h=orig_handler, p=prepend_text: h(f"{p} {c}".strip())
+                        else:
+                            content_sub_handler = orig_handler
+                            
+            # 2. Standard Types
+            elif cmd_type == "shortcut":
                 action = lambda v=value: self._type_key(v)
             elif cmd_type == "text":
-                # For text, we use substitution to insert it
-                # If it's a block command (requires_end), it replaces content? 
-                # Actually, simpler: "text" type just types the text.
-                # If substitution is needed, we need a handler.
-                # Let's keep it simple: Action types the text.
                 action = lambda v=value: self._type_text(v)
-            elif cmd_type == "delta":
-                # Custom AI command
-                requires_content = True
-                requires_end = True
-                action = lambda x: None
-                # We need a way to pass the custom prompt if we want different personas
-                # For now, just map to standard delta handler with the common prompt
-                # Or maybe later allow custom prompts per command
-                content_sub_handler = self._ollama_get_response
             
+            # Register if valid
             if action or content_sub_handler:
                 self.register(trigger, action, 
                               requires_content=requires_content, 
@@ -185,12 +227,25 @@ class VoiceCommandDetector:
         from .settings import get_settings
         settings = get_settings()
         
-        # Check if disabled
-        if trigger.lower().strip() in [t.lower() for t in settings.disabled_commands]:
+        base_trigger = trigger.lower().strip()
+        
+        # Check defaults disabled list (based on ORIGINAL names)
+        # Note: We track checks by original name to ensure "disable copy" persists even if "copy" is renamed "dup"
+        # The settings.disabled_commands usually stores original keys for builtins
+        if category != "custom" and base_trigger in [t.lower() for t in settings.disabled_commands]:
             return
 
-        self.commands[trigger.lower().strip()] = CommandDefinition(
-            trigger=trigger.lower().strip(),
+        # Check for Overrides (Renaming)
+        effective_trigger = base_trigger
+        if category != "custom":
+            overrides = settings.builtin_overrides
+            if base_trigger in overrides:
+                effective_trigger = overrides[base_trigger].lower().strip()
+                if not effective_trigger: # If renamed to empty, treat as disabled
+                    return
+
+        self.commands[effective_trigger] = CommandDefinition(
+            trigger=effective_trigger,
             action=action,
             requires_content=requires_content,
             requires_end=requires_end,

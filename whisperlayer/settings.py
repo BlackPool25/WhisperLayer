@@ -44,13 +44,14 @@ DEFAULTS = {
     "language": "en",
     # Ollama settings
     "ollama_enabled": True,
-    "ollama_model": "llama3.2:3b",
+    "ollama_model": "gemma3:1b",
     "ollama_custom_models": [],  # User-added model names
     "ollama_custom_prompt_enabled": False,  # "Change at your own risk" toggle
     "ollama_system_prompt": DEFAULT_OLLAMA_PROMPT,
     # Command settings
     "custom_commands": [],  # List of dicts: {trigger, type, value, requires_end, enabled}
     "disabled_commands": [],  # List of triggers of built-in commands that are disabled
+    "builtin_overrides": {},  # Dict mapping original_trigger -> new_trigger
 }
 
 # Available Whisper models (from openai-whisper)
@@ -477,6 +478,10 @@ class Settings:
     @property
     def disabled_commands(self) -> list:
         return self.get("disabled_commands", [])
+
+    @property
+    def builtin_overrides(self) -> dict:
+        return self.get("builtin_overrides", {})
 
 
 # Global settings instance

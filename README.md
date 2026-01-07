@@ -195,6 +195,24 @@ You can now create your own voice commands in Settings!
    - **Text**: Type a phrase (e.g. "Best regards, Name")
 4. Set your trigger phrase (e.g. "Okay restore")
 
+#### 🔄 Renaming Built-in Commands
+Don't like saying "Okay copy"? rename it!
+- Go to **Settings** -> **System Commands**
+- Click the text box next to any command (e.g., "copy")
+- Type your new trigger (e.g., "duplicate")
+- Now say "Okay duplicate" to copy!
+
+#### 🏷️ Command Aliases (@)
+You can create custom commands that reference or extend other commands.
+- **Value:** Starts with `@` followed by the target command trigger.
+
+**Examples:**
+| Trigger | Value | Effect |
+|---------|-------|--------|
+| `Okay code` | `@delta write code for` | Equivalent to saying "Okay delta write code for [content]" |
+| `Okay dup` | `@copy` | "Okay dup" triggers "Okay copy" |
+| `Okay explain` | `@delta explain this code` | Quick shortcut for AI explanation |
+
 You can also **Disable Built-in Commands** in the "System Commands" section if they interfere with your dictation.
 
 ## 🎯 Whisper Models
