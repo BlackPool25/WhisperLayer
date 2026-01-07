@@ -39,7 +39,8 @@ class TextInjector:
         
         try:
             # Chunk long text to prevent ydotool timeouts/buffering issues
-            chunk_size = 50
+            # Reduced chunk size for reliability
+            chunk_size = 20
             total_chunks = (len(text) + chunk_size - 1) // chunk_size
             
             import time
@@ -49,8 +50,9 @@ class TextInjector:
                 
                 # ydotool type command
                 # --key-delay: delay between key presses in ms
+                # Increased to 15ms to prevent dropped characters
                 result = subprocess.run(
-                    [self._ydotool_path, "type", "--key-delay", "5", "--", chunk],
+                    [self._ydotool_path, "type", "--key-delay", "15", "--", chunk],
                     capture_output=True,
                     text=True,
                     timeout=5  # Shorter timeout per chunk
@@ -75,10 +77,10 @@ class TextInjector:
     
     def type_key(self, key: str) -> bool:
         """
-        Press a specific key.
+        Press a specific key or key combination.
         
         Args:
-            key: Key to press (e.g., "Return", "BackSpace", "Tab")
+            key: Key to press (e.g., "Return", "ctrl+c", "alt+Tab")
             
         Returns:
             True if successful
@@ -86,42 +88,93 @@ class TextInjector:
         if self._ydotool_path is None:
             return False
         
-        # Map key names to Linux keycodes for ydotool
-        # Format: ["keycode:1", "keycode:0"] for press and release
-        key_map = {
-            "return": ["28:1", "28:0"],
-            "enter": ["28:1", "28:0"],
-            "backspace": ["14:1", "14:0"],
-            "tab": ["15:1", "15:0"],
-            "escape": ["1:1", "1:0"],
-            "space": ["57:1", "57:0"],
-            # Modifier combinations
-            "ctrl+c": ["29:1", "46:1", "46:0", "29:0"],
-            "ctrl+v": ["29:1", "47:1", "47:0", "29:0"],
-            "ctrl+x": ["29:1", "45:1", "45:0", "29:0"],
-            "ctrl+z": ["29:1", "44:1", "44:0", "29:0"],
-            "ctrl+a": ["29:1", "30:1", "30:0", "29:0"],
-            "ctrl+shift+z": ["29:1", "42:1", "44:1", "44:0", "42:0", "29:0"],
-            "ctrl+backspace": ["29:1", "14:1", "14:0", "29:0"],
+        # Mapping for key aliases to standard input names
+        # ydotool generally accepts standard Linux input names (e.g. KEY_ENTER -> Enter)
+        # We try to map common variations to the most standard name
+        NAME_MAPPING = {
+            # Modifiers - Keep as names (lowercase usually fine)
+            "ctrl": "ctrl", "control": "ctrl", "leftctrl": "leftctrl", "rightctrl": "rightctrl",
+            "shift": "shift", "leftshift": "leftshift", "rightshift": "rightshift",
+            "alt": "alt", "leftalt": "leftalt", "rightalt": "rightalt",
+            "super": "super", "meta": "super", "win": "super", "windows": "super",
+            
+            # Special keys - Use valid ydotool LOWERCASE names
+            # Verified 'enter' works. 'Return' typed 'r'. '28' typed '2'.
+            "return": "enter", "enter": "enter", "ret": "enter",
+            "kp_enter": "kp_enter", # hoping this works, otherwise use 'enter'
+            "backspace": "backspace", "back": "backspace",
+            "tab": "tab",
+            "escape": "escape", "esc": "escape",
+            "space": "space",
+            "capslock": "capslock", "caps": "capslock",
+            "delete": "delete", "del": "delete",
+            "insert": "insert", "ins": "insert",
+            "home": "home", "end": "end",
+            "pageup": "pageup", "page_up": "pageup", "prior": "pageup",
+            "pagedown": "pagedown", "page_down": "pagedown", "next": "pagedown",
+            "menu": "menu",
+            
+            # Arrow keys
+            "up": "up", "down": "down", "left": "left", "right": "right",
+            
+            # Punctuation keys that might need specific names
+            # (Simple chars like 'a', '1', '.' usually work as is)
+            "plus": "plus",
+            "minus": "minus",
+            "asterisk": "asterisk",
+            "slash": "slash",
+            "equal": "equal",
+            "comma": "comma",
+            "period": "dot", "dot": "dot",
+            "semicolon": "semicolon",
+            "apostrophe": "apostrophe", "quote": "apostrophe",
+            "grave": "grave",
+            "backslash": "backslash",
+            "leftbrace": "leftbrace", "bracketleft": "leftbrace",
+            "rightbrace": "rightbrace", "bracketright": "rightbrace",
         }
         
-        key_lower = key.lower()
+        key_lower = key.lower().strip()
         
         try:
-            if key_lower in key_map:
-                keycodes = key_map[key_lower]
-            else:
-                # Try to use the key directly as a single keycode
-                keycodes = [key]
+            # Parse key combination (e.g., "ctrl+shift+a")
+            parts = [p.strip() for p in key_lower.replace("<", "").replace(">", "").split("+")]
             
-            # Build command: ydotool key <keycode1> <keycode2> ...
-            cmd = [self._ydotool_path, "key"] + keycodes
+            mapped_parts = []
+            for part in parts:
+                # Check mapping
+                if part in NAME_MAPPING:
+                    mapped = NAME_MAPPING[part]
+                    print(f"DEBUG: Mapping '{part}' -> '{mapped}'")
+                    mapped_parts.append(mapped)
+                elif part.startswith("f") and part[1:].isdigit():
+                    # F1-F12 need upper case usually? e.g. F1
+                    mapped_parts.append(part.upper())
+                else:
+                    # Pass through single chars or unknown keys
+                    mapped_parts.append(part)
+            
+            if not mapped_parts:
+                return False
+                
+            # Reconstruct key combo for ydotool: "ctrl+shift+a"
+            final_key = "+".join(mapped_parts)
+            
+            # Run ydotool key <key>
+            # Add small delay just in case
+            cmd = [self._ydotool_path, "key", "--key-delay", "20", final_key]
+            
+            print(f"DEBUG: ydotool cmd: {' '.join(cmd)}")
             
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 timeout=5
             )
+            
+            if result.returncode != 0:
+                print(f"ydotool failed: {result.stderr}")
+            
             return result.returncode == 0
         except Exception as e:
             print(f"ydotool key error: {e}")

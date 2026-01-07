@@ -2,7 +2,6 @@
 
 import gi
 gi.require_version('Gtk', '3.0')
-gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib, Pango
 
 # ... imports ...
@@ -52,8 +51,9 @@ class CommandMacroEditor(Gtk.Box):
         
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroll.set_max_content_height(150)
-        scroll.set_min_content_width(200)
+        scroll.set_max_content_height(300)  # Show more items
+        scroll.set_min_content_width(280)   # Wider popup
+        scroll.set_propagate_natural_height(True)  # Auto-size to content
         scroll.add(self.pop_list)
         
         self.popover.add(scroll)
@@ -142,33 +142,51 @@ class CommandMacroEditor(Gtk.Box):
         for child in self.pop_list.get_children():
             self.pop_list.remove(child)
             
-        # Get commands
-        import sys
-        # Hack to access detector commands
-        # In real app we should pass detector. 
-        # For now assume we can get it from settings/app? 
-        # Or just instantiate one (cached)
-        
-        # For this prototype, let's instantiate one locally or cache it class-level?
-        if not hasattr(self, '_detector'):
-             from .commands import VoiceCommandDetector
-             self._detector = VoiceCommandDetector()
-             
-        cmds = self._detector.commands
+        # Get commands with error handling
+        try:
+            if not hasattr(self, '_detector') or self._detector is None:
+                from .commands import VoiceCommandDetector
+                self._detector = VoiceCommandDetector()
+                 
+            cmds = self._detector.commands
+        except Exception as e:
+            print(f"Error loading commands for autocomplete: {e}")
+            self.popover.popdown()
+            return
+            
         match_count = 0
+        query_lower = query.lower().strip()
         
-        for name, cmd in cmds.items():
-            if name.startswith(query):
+        # Sort commands alphabetically
+        sorted_cmds = sorted(cmds.items(), key=lambda x: x[0])
+        
+        for name, cmd in sorted_cmds:
+            # Show all if query is empty, otherwise filter by 'contains' for better UX
+            if query_lower == "" or query_lower in name.lower():
                 row = Gtk.ListBoxRow()
-                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-                box.set_margin_top(4)
-                box.set_margin_bottom(4)
-                box.set_margin_left(4)
+                row.get_style_context().add_class("suggestion-row")
+                box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+                box.set_margin_top(6)
+                box.set_margin_bottom(6)
+                box.set_margin_start(8)
+                box.set_margin_end(8)
                 
-                lbl = Gtk.Label(label=f"@{name}")
+                # Icon for instant vs block
+                if cmd.requires_end:
+                    icon = Gtk.Label(label="🛑")
+                    icon.set_tooltip_text("Block: requires 'Okay Done'")
+                else:
+                    icon = Gtk.Label(label="⚡")
+                    icon.set_tooltip_text("Instant: executes immediately")
+                box.pack_start(icon, False, False, 0)
+                
+                # Command name with highlighting
+                lbl = Gtk.Label()
                 lbl.set_halign(Gtk.Align.START)
                 if cmd.requires_end:
-                     lbl.set_markup(f"<b>@{name}</b> <span size='small' color='gray'>[query]</span>")
+                    lbl.set_markup(f"<b>@{name}</b> <span size='small' color='#6b7280'>[query]</span>")
+                else:
+                    lbl.set_markup(f"<b>@{name}</b>")
                 
                 box.pack_start(lbl, True, True, 0)
                 row.add(box)
@@ -177,19 +195,31 @@ class CommandMacroEditor(Gtk.Box):
                 self.pop_list.add(row)
                 match_count += 1
                 
+                # Limit to 10 suggestions for performance
+                if match_count >= 10:
+                    break
+                
         if match_count > 0:
             self.pop_list.show_all()
-            # Position popover
+            
+            # Position popover relative to cursor
             rect = self.textview.get_iter_location(iter_start)
-            # convert buffer coords to window coords
-            win_x, win_y = self.textview.buffer_to_window_coords(Gtk.TextWindowType.TEXT, rect.x, rect.y + rect.height)
-            rect.x = win_x
-            rect.y = win_y
-            self.popover.set_pointing_to(rect)
-            self.popover.popup()
-            self._current_start_iter = iter_start.create_mark(None, True) # save where @ started
+            win_x, win_y = self.textview.buffer_to_window_coords(Gtk.TextWindowType.WIDGET, rect.x, rect.y + rect.height)
+            
+            # Create a proper Gdk.Rectangle for pointing
+            pointing_rect = Gdk.Rectangle()
+            pointing_rect.x = win_x
+            pointing_rect.y = win_y
+            pointing_rect.width = 1
+            pointing_rect.height = rect.height
+            
+            self.popover.set_pointing_to(pointing_rect)
+            self.popover.set_modal(False)  # Don't steal focus
+            self.popover.show_all()
+            
+            self._current_start_iter = self.buffer.create_mark(None, iter_start, True)
         else:
-            self.popover.popdown()
+            self.popover.hide()
 
     def _on_suggestion_clicked(self, box, row):
         name = row.cmd_name
@@ -248,22 +278,45 @@ class CommandMacroEditor(Gtk.Box):
         self.textview.grab_focus()
 
     def _on_record_clicked(self, btn):
-        dialog = Gtk.MessageDialog(
+        dialog = Gtk.Dialog(
+            title="Record Keystrokes",
             transient_for=self.get_toplevel(),
             modal=True,
-            buttons=Gtk.ButtonsType.CANCEL,
-            text="Record Keystrokes"
+            destroy_with_parent=True
         )
-        dialog.format_secondary_text("Press keys now... (Click 'Add' when done)")
+        dialog.set_default_size(300, 150)
         
         content = dialog.get_content_area()
+        content.set_spacing(10)
+        content.set_margin_top(20)
+        content.set_margin_bottom(20)
+        content.set_margin_start(20)
+        content.set_margin_end(20)
+        
+        info_lbl = Gtk.Label(label="Press keys now... (Click 'Add' when done)")
+        info_lbl.set_line_wrap(True)
+        content.pack_start(info_lbl, False, False, 0)
+        
         lbl = Gtk.Label(label="...")
         lbl.get_style_context().add_class("key-label")
         lbl.set_margin_top(20)
         lbl.set_margin_bottom(20)
         content.pack_start(lbl, True, True, 0)
         
-        dialog.add_button("Add", Gtk.ResponseType.OK)
+        # Button box
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        btn_box.set_halign(Gtk.Align.END)
+        
+        cancel_btn = Gtk.Button(label="Cancel")
+        cancel_btn.connect("clicked", lambda b: dialog.response(Gtk.ResponseType.CANCEL))
+        btn_box.pack_start(cancel_btn, False, False, 0)
+        
+        add_btn = Gtk.Button(label="Add")
+        add_btn.get_style_context().add_class("save-button")
+        add_btn.connect("clicked", lambda b: dialog.response(Gtk.ResponseType.OK))
+        btn_box.pack_start(add_btn, False, False, 0)
+        
+        content.pack_start(btn_box, False, False, 0)
         
         self.recorded_keys = set()
         self.final_combo = ""
@@ -271,49 +324,50 @@ class CommandMacroEditor(Gtk.Box):
         def on_key(widget, event):
             keyname = Gdk.keyval_name(event.keyval).lower()
             
-            # Simple modifier logic
-            # This is a bit duplicative of settings logic but simpler
-            if "shift" in keyname: mods = "<shift>"
-            elif "control" in keyname: mods = "<ctrl>"
-            elif "alt" in keyname: mods = "<alt>"
-            elif "super" in keyname: mods = "<super>"
-            else:
-                 # It's a key
-                 # Combine with held modifiers?
-                 # Simplified: Just <key> or <mod>+<key>
-                 # We need to track held modifiers.
-                 pass
+            # Handle special keys that might close dialog
+            if keyname in ['return', 'kp_enter', 'escape']:
+                # Record these keys instead of closing
+                state = event.state
+                parts = []
+                if state & Gdk.ModifierType.CONTROL_MASK: parts.append("ctrl")
+                if state & Gdk.ModifierType.MOD1_MASK: parts.append("alt")
+                if state & Gdk.ModifierType.SHIFT_MASK: parts.append("shift")
+                if state & Gdk.ModifierType.SUPER_MASK: parts.append("super")
+                
+                # Normalize key names
+                if keyname in ['return', 'kp_enter']:
+                    parts.append("return")
+                elif keyname == 'escape':
+                    parts.append("escape")
+                else:
+                    parts.append(keyname)
+                    
+                self.final_combo = "+".join(parts)
+                lbl.set_text(self.final_combo)
+                return True  # Prevent default handling (dialog close)
             
-            # Better: Append raw key to buffer?
-            # User wants "auto convert to format".
-            # Let's just use the existing _on_key_release logic concept.
-            
-            # Quick output
+            # Ignore modifier-only presses
             if keyname in ['control_l', 'control_r', 'shift_l', 'shift_r', 'alt_l', 'alt_r', 'super_l', 'super_r']:
-                return # ignore mod-only press for display updates (wait for combo)
+                return True
                 
             state = event.state
             parts = []
             if state & Gdk.ModifierType.CONTROL_MASK: parts.append("ctrl")
-            if state & Gdk.ModifierType.MOD1_MASK: parts.append("alt") # Alt
+            if state & Gdk.ModifierType.MOD1_MASK: parts.append("alt")
             if state & Gdk.ModifierType.SHIFT_MASK: parts.append("shift")
             if state & Gdk.ModifierType.SUPER_MASK: parts.append("super")
             
             parts.append(keyname)
             self.final_combo = "+".join(parts)
             lbl.set_text(self.final_combo)
+            return True  # Prevent any default key handling
             
         dialog.connect("key-press-event", on_key)
         dialog.show_all()
         
         response = dialog.run()
         if response == Gtk.ResponseType.OK and self.final_combo:
-            # Insert into textview
-            # Format: <ctrl>+c
-            # The detector expects this format for keys?
-            # detector._type_key uses re.match logic or splitting?
-            # Let's assume standard format matches.
-            
+            # Insert into textview with proper format
             self.buffer.insert_at_cursor(f"<{self.final_combo}> ")
             
         dialog.destroy()
@@ -511,6 +565,154 @@ checkbutton:checked check {
     font-size: 13px;
     color: #374151;
 }
+
+/* Modern Toggle Switch Styling - GTK3 proper selectors */
+switch {
+    font-size: 0;
+    min-width: 52px;
+    min-height: 26px;
+    background-color: #cbd5e1;
+    border-radius: 13px;
+    border: none;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+}
+
+switch:checked {
+    background-image: linear-gradient(to right, #22c55e, #16a34a);
+}
+
+switch:disabled {
+    opacity: 0.5;
+}
+
+switch slider {
+    min-width: 22px;
+    min-height: 22px;
+    border-radius: 11px;
+    background-color: #ffffff;
+    border: none;
+    margin: 2px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+/* Enhanced Section Styling */
+.section-box {
+    background-color: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 8px 20px;
+}
+
+.section-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #4f46e5;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #e0e7ff;
+}
+
+/* Popover and Autocomplete Styling */
+popover {
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+}
+
+popover contents {
+    padding: 4px;
+}
+
+.suggestion-row {
+    border-radius: 6px;
+    margin: 2px 4px;
+}
+
+.suggestion-row:hover {
+    background-color: #eef2ff;
+}
+
+.suggestion-row:selected {
+    background-color: #4f46e5;
+    color: white;
+}
+
+/* Command Badge Styling */
+.cmd-badge-instant {
+    background-color: #fef3c7;
+    color: #d97706;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+.cmd-badge-block {
+    background-color: #fee2e2;
+    color: #dc2626;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+}
+
+/* Entry Styling */
+entry {
+    border-radius: 8px;
+    padding: 8px 12px;
+    border: 1px solid #d1d5db;
+    background-color: #f9fafb;
+}
+
+entry:focus {
+    border-color: #4f46e5;
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+}
+
+/* Button Enhancements */
+.save-button {
+    background-image: linear-gradient(to right, #4f46e5, #6366f1);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    color: white;
+    font-weight: 600;
+    box-shadow: 0 4px 6px rgba(79, 70, 229, 0.25);
+}
+
+.save-button:hover {
+    background-image: linear-gradient(to right, #4338ca, #4f46e5);
+    box-shadow: 0 6px 12px rgba(79, 70, 229, 0.35);
+}
+
+/* Query Box inside Command Editor */
+.query-box {
+    background-color: #eef2ff;
+    border: 1px solid #c7d2fe;
+    border-radius: 4px;
+    color: #3730a3;
+    padding: 2px 8px;
+    margin: 0 4px;
+    font-size: 12px;
+}
+
+/* Macro Editor Styling */
+.macro-editor {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background-color: #ffffff;
+}
+
+.macro-editor textview {
+    background-color: #ffffff;
+    border-radius: 8px;
+}
+
+.macro-editor textview text {
+    background-color: #ffffff;
+}
 """
 
 
@@ -682,12 +884,14 @@ class SettingsWindow(Gtk.Window):
             
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
             
-            # Status Badge (End required?)
-            status_icon = "media-playlist-repeat" if cmd.requires_end else "media-flash"
-            status_tooltip = "Wait for 'Okay Done'" if cmd.requires_end else "Immediate Action"
-            icon = Gtk.Image.new_from_icon_name(status_icon, Gtk.IconSize.MENU)
-            icon.set_tooltip_text(status_tooltip)
-            row.pack_start(icon, False, False, 0)
+            # Status Badge (End required?) - Use emoji labels for clarity
+            if cmd.requires_end:
+                icon_lbl = Gtk.Label(label="🛑")
+                icon_lbl.set_tooltip_text("Block: Requires 'Okay Done' end phrase")
+            else:
+                icon_lbl = Gtk.Label(label="⚡")
+                icon_lbl.set_tooltip_text("Instant: Executes immediately")
+            row.pack_start(icon_lbl, False, False, 0)
             
             # Label (Original Name)
             # label = Gtk.Label(label=orig_trigger.title())
@@ -754,7 +958,7 @@ class SettingsWindow(Gtk.Window):
         row3.pack_start(Gtk.Label(label="Action (Text, Keys, or @commands):"), False, False, 0)
         
         self.new_cmd_editor = CommandMacroEditor()
-        self.new_cmd_editor.set_height_request(80) # Give it some height
+        self.new_cmd_editor.scrolled.set_min_content_height(80) # Give it some height
         row3.pack_start(self.new_cmd_editor, True, True, 0)
         add_box.pack_start(row3, True, True, 0)
         
@@ -772,115 +976,7 @@ class SettingsWindow(Gtk.Window):
         
         custom_section.pack_start(add_box, False, False, 0)
 
-    # ... (other methods) ...
-
-    def _refresh_custom_commands(self):
-        """Rebuild the custom commands listbox."""
-        for child in self.custom_listbox.get_children():
-            self.custom_listbox.remove(child)
-            
-        for i, cmd in enumerate(self.settings.custom_commands):
-            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            row.set_margin_bottom(4)
-            
-            # Status Badge (End required?)
-            # Improved icons:
-            # Instant -> lightning (media-flash was ok, but maybe weather-storm?) 
-            # Block -> stop sign (process-stop)
-            status_icon = "process-stop" if cmd.get("requires_end") else "weather-storm" 
-            status_tooltip = "Requires 'Okay Done'" if cmd.get("requires_end") else "Instant Action"
-            icon = Gtk.Image.new_from_icon_name(status_icon, Gtk.IconSize.MENU)
-            icon.set_tooltip_text(status_tooltip)
-            row.pack_start(icon, False, False, 0)
-            
-            # Info
-            trigger = cmd.get("trigger", "??")
-            # ctype = cmd.get("type", "??") # Type is now implicitly macro
-            value = cmd.get("value", "??")
-            
-            label = Gtk.Label()
-            enabled = cmd.get("enabled", True)
-            fmt_trigger = f"<b>{trigger}</b>" if enabled else f"<s>{trigger}</s>"
-            # Truncate value if too long
-            disp_value = (value[:30] + '..') if len(value) > 30 else value
-            label.set_markup(f"{fmt_trigger}: <span font_family='monospace'>{disp_value}</span>")
-            label.set_halign(Gtk.Align.START)
-            if not enabled:
-                label.set_opacity(0.6)
-            row.pack_start(label, True, True, 0)
-            
-            # Enable Switch
-            switch = Gtk.Switch()
-            switch.set_active(enabled)
-            # connect using a closure to capture index safely? 
-            # lambda w, s, idx=i: ...
-            switch.connect("state-set", self._on_custom_command_toggled, i)
-            row.pack_start(switch, False, False, 0)
-            
-            # Delete button
-            del_btn = Gtk.Button(label="🗑️")
-            del_btn.get_style_context().add_class("refresh-btn")
-            del_btn.connect("clicked", self._on_delete_custom_command, i)
-            row.pack_start(del_btn, False, False, 0)
-            
-            self.custom_listbox.add(row)
-        
-        self.custom_listbox.show_all()
-        
-    def _on_custom_command_toggled(self, switch, state, index):
-        """Toggle enabled state of custom command."""
-        commands = self.settings.custom_commands
-        if 0 <= index < len(commands):
-            commands[index]["enabled"] = state
-            # Do NOT refresh listbox here to avoid destroying the switch user is clicking
-            # Just update label opacity if we can find it?
-            # Iterating children is messy. Let's just trust state is saved.
-            # Visual feedback is the switch itself toggling.
-            return True
-        return False
-
-    def _on_add_custom_command(self, button):
-        trigger = self.new_cmd_trigger.get_text().strip().lower()
-        val = self.new_cmd_editor.get_text().strip()
-        req_end = self.new_cmd_end.get_active()
-        
-        if not trigger or not val:
-            return
-            
-        # Check duplicate
-        for cmd in self.settings.custom_commands:
-            if cmd['trigger'] == trigger:
-                dialog = Gtk.MessageDialog(
-                    transient_for=self,
-                    message_type=Gtk.MessageType.ERROR,
-                    buttons=Gtk.ButtonsType.OK,
-                    text="Duplicate Trigger"
-                )
-                dialog.format_secondary_text(f"Command 'okay {trigger}' already exists.")
-                dialog.run()
-                dialog.destroy()
-                return
-
-        new_cmd = {
-            "trigger": trigger,
-            "type": "macro", # Always macro now
-            "value": val,
-            "requires_end": req_end,
-            "enabled": True
-        }
-        
-        cmds = list(self.settings.custom_commands)
-        cmds.append(new_cmd)
-        
-        self.settings._settings["custom_commands"] = cmds 
-        
-        self._refresh_custom_commands()
-        
-        # Clear form
-        self.new_cmd_trigger.set_text("")
-        self.new_cmd_editor.set_text("")
-        self.new_cmd_end.set_active(False)
-
+        # Hotkey Section
         hotkey_section = self._create_section("HOTKEY")
         content.pack_start(hotkey_section, False, False, 0)
         
@@ -1086,6 +1182,234 @@ class SettingsWindow(Gtk.Window):
         self.ollama_status_label.set_halign(Gtk.Align.START)
         self.ollama_status_label.set_margin_top(8)
         ollama_section.pack_start(self.ollama_status_label, False, False, 0)
+
+    # ... (other methods) ...
+
+    def _refresh_custom_commands(self):
+        """Rebuild the custom commands listbox."""
+        for child in self.custom_listbox.get_children():
+            self.custom_listbox.remove(child)
+            
+        for i, cmd in enumerate(self.settings.custom_commands):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row.set_margin_bottom(4)
+            
+            # Status Badge (End required?) - Use emoji labels for clarity
+            if cmd.get("requires_end"):
+                icon_lbl = Gtk.Label(label="🛑")
+                icon_lbl.set_tooltip_text("Block: Requires 'Okay Done' end phrase")
+            else:
+                icon_lbl = Gtk.Label(label="⚡")
+                icon_lbl.set_tooltip_text("Instant: Executes immediately")
+            icon = icon_lbl
+            row.pack_start(icon, False, False, 0)
+            
+            # Info
+            trigger = cmd.get("trigger", "??")
+            # ctype = cmd.get("type", "??") # Type is now implicitly macro
+            value = cmd.get("value", "??")
+            
+            label = Gtk.Label()
+            enabled = cmd.get("enabled", True)
+            fmt_trigger = f"<b>{trigger}</b>" if enabled else f"<s>{trigger}</s>"
+            # Truncate value if too long and escape special chars for markup
+            disp_value = (value[:30] + '..') if len(value) > 30 else value
+            disp_value = GLib.markup_escape_text(disp_value)
+            label.set_markup(f"{fmt_trigger}: <span font_family='monospace'>{disp_value}</span>")
+            label.set_halign(Gtk.Align.START)
+            if not enabled:
+                label.set_opacity(0.6)
+            row.pack_start(label, True, True, 0)
+            
+            # Enable Switch
+            switch = Gtk.Switch()
+            switch.set_active(enabled)
+            switch.connect("state-set", self._on_custom_command_toggled, i)
+            row.pack_start(switch, False, False, 0)
+            
+            # Edit button
+            edit_btn = Gtk.Button(label="✏️")
+            edit_btn.get_style_context().add_class("refresh-btn")
+            edit_btn.set_tooltip_text("Edit command")
+            edit_btn.connect("clicked", self._on_edit_custom_command, i)
+            row.pack_start(edit_btn, False, False, 0)
+            
+            # Delete button
+            del_btn = Gtk.Button(label="🗑️")
+            del_btn.get_style_context().add_class("refresh-btn")
+            del_btn.set_tooltip_text("Delete command")
+            del_btn.connect("clicked", self._on_delete_custom_command, i)
+            row.pack_start(del_btn, False, False, 0)
+            
+            self.custom_listbox.add(row)
+        
+        self.custom_listbox.show_all()
+        
+    def _on_custom_command_toggled(self, switch, state, index):
+        """Toggle enabled state of custom command."""
+        commands = self.settings.custom_commands
+        if 0 <= index < len(commands):
+            commands[index]["enabled"] = state
+            # Do NOT refresh listbox here to avoid destroying the switch user is clicking
+            # Just update label opacity if we can find it?
+            # Iterating children is messy. Let's just trust state is saved.
+            # Visual feedback is the switch itself toggling.
+            return True
+        return False
+
+    def _on_add_custom_command(self, button):
+        trigger = self.new_cmd_trigger.get_text().strip().lower()
+        val = self.new_cmd_editor.get_text().strip()
+        req_end = self.new_cmd_end.get_active()
+        
+        if not trigger or not val:
+            return
+            
+        # Check duplicate
+        for cmd in self.settings.custom_commands:
+            if cmd['trigger'] == trigger:
+                dialog = Gtk.MessageDialog(
+                    transient_for=self,
+                    message_type=Gtk.MessageType.ERROR,
+                    buttons=Gtk.ButtonsType.OK,
+                    text="Duplicate Trigger"
+                )
+                dialog.format_secondary_text(f"Command 'okay {trigger}' already exists.")
+                dialog.run()
+                dialog.destroy()
+                return
+
+        new_cmd = {
+            "trigger": trigger,
+            "type": "macro", # Always macro now
+            "value": val,
+            "requires_end": req_end,
+            "enabled": True
+        }
+        
+        cmds = list(self.settings.custom_commands)
+        cmds.append(new_cmd)
+        
+        self.settings._settings["custom_commands"] = cmds 
+        
+        self._refresh_custom_commands()
+        
+        # Clear form
+        self.new_cmd_trigger.set_text("")
+        self.new_cmd_editor.set_text("")
+        self.new_cmd_end.set_active(False)
+    
+    def _on_edit_custom_command(self, button, index):
+        """Open dialog to edit an existing custom command."""
+        cmds = self.settings.custom_commands
+        if not (0 <= index < len(cmds)):
+            return
+            
+        cmd = cmds[index]
+        
+        # Create edit dialog
+        dialog = Gtk.Dialog(
+            title="Edit Custom Command",
+            transient_for=self,
+            modal=True,
+            destroy_with_parent=True
+        )
+        dialog.set_default_size(450, 300)
+        
+        content = dialog.get_content_area()
+        content.set_spacing(15)
+        content.set_margin_top(20)
+        content.set_margin_bottom(20)
+        content.set_margin_start(20)
+        content.set_margin_end(20)
+        
+        # Trigger row
+        trigger_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        trigger_label = Gtk.Label(label="Trigger: Okay...")
+        trigger_label.get_style_context().add_class("setting-label")
+        trigger_label.set_halign(Gtk.Align.START)
+        trigger_row.pack_start(trigger_label, False, False, 0)
+        
+        trigger_entry = Gtk.Entry()
+        trigger_entry.set_text(cmd.get("trigger", ""))
+        trigger_entry.set_hexpand(True)
+        trigger_entry.set_placeholder_text("e.g. explain code")
+        trigger_row.pack_start(trigger_entry, True, True, 0)
+        content.pack_start(trigger_row, False, False, 0)
+        
+        # Action row
+        action_label = Gtk.Label(label="Action (Text, Keys, or @commands):")
+        action_label.set_halign(Gtk.Align.START)
+        action_label.get_style_context().add_class("setting-label")
+        content.pack_start(action_label, False, False, 0)
+        
+        # Use the same CommandMacroEditor for editing
+        action_editor = CommandMacroEditor()
+        action_editor.set_text(cmd.get("value", ""))
+        content.pack_start(action_editor, True, True, 0)
+        
+        # Requires End checkbox
+        req_end_check = Gtk.CheckButton(label="Require 'Okay Done'?")
+        req_end_check.set_active(cmd.get("requires_end", False))
+        content.pack_start(req_end_check, False, False, 0)
+        
+        # Buttons
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        btn_box.set_halign(Gtk.Align.END)
+        btn_box.set_margin_top(15)
+        
+        cancel_btn = Gtk.Button(label="Cancel")
+        cancel_btn.connect("clicked", lambda b: dialog.response(Gtk.ResponseType.CANCEL))
+        btn_box.pack_start(cancel_btn, False, False, 0)
+        
+        save_btn = Gtk.Button(label="Save Changes")
+        save_btn.get_style_context().add_class("save-button")
+        save_btn.connect("clicked", lambda b: dialog.response(Gtk.ResponseType.OK))
+        btn_box.pack_start(save_btn, False, False, 0)
+        
+        content.pack_start(btn_box, False, False, 0)
+        
+        dialog.show_all()
+        response = dialog.run()
+        
+        if response == Gtk.ResponseType.OK:
+            new_trigger = trigger_entry.get_text().strip().lower()
+            new_value = action_editor.get_text().strip()
+            new_req_end = req_end_check.get_active()
+            
+            if new_trigger and new_value:
+                # Check for duplicate trigger (but allow keeping same trigger)
+                for i, c in enumerate(cmds):
+                    if i != index and c['trigger'] == new_trigger:
+                        error_dialog = Gtk.MessageDialog(
+                            transient_for=self,
+                            message_type=Gtk.MessageType.ERROR,
+                            buttons=Gtk.ButtonsType.OK,
+                            text="Duplicate Trigger"
+                        )
+                        error_dialog.format_secondary_text(f"Command 'okay {new_trigger}' already exists.")
+                        error_dialog.run()
+                        error_dialog.destroy()
+                        dialog.destroy()
+                        return
+                
+                # Update the command
+                cmds[index]["trigger"] = new_trigger
+                cmds[index]["value"] = new_value
+                cmds[index]["requires_end"] = new_req_end
+                cmds[index]["type"] = "macro"
+                
+                self._refresh_custom_commands()
+        
+        dialog.destroy()
+    
+    def _on_delete_custom_command(self, button, index):
+        """Delete a custom command."""
+        cmds = list(self.settings.custom_commands)
+        if 0 <= index < len(cmds):
+            cmds.pop(index)
+            self.settings._settings["custom_commands"] = cmds
+            self._refresh_custom_commands()
     
     def _create_section(self, title):
         section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -1380,114 +1704,6 @@ class SettingsWindow(Gtk.Window):
         """Handle renaming a builtin command trigger."""
         # We handle actual saving in _on_save
         pass
-
-    def _refresh_custom_commands(self):
-        """Rebuild the custom commands listbox."""
-        for child in self.custom_listbox.get_children():
-            self.custom_listbox.remove(child)
-            
-        for i, cmd in enumerate(self.settings.custom_commands):
-            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-            row.set_margin_bottom(4)
-            
-            # Status Badge (End required?)
-            status_icon = "media-playlist-repeat" if cmd.get("requires_end") else "media-flash"
-            status_tooltip = "Wait for 'Okay Done'" if cmd.get("requires_end") else "Immediate Action"
-            icon = Gtk.Image.new_from_icon_name(status_icon, Gtk.IconSize.MENU)
-            icon.set_tooltip_text(status_tooltip)
-            row.pack_start(icon, False, False, 0)
-            
-            # Info
-            trigger = cmd.get("trigger", "??")
-            ctype = cmd.get("type", "??")
-            value = cmd.get("value", "??")
-            
-            label = Gtk.Label()
-            # Mark disabled with strikethrough or grey
-            enabled = cmd.get("enabled", True)
-            fmt_trigger = f"<b>{trigger}</b>" if enabled else f"<s>{trigger}</s>"
-            label.set_markup(f"{fmt_trigger} ({ctype}): <i>{value}</i>")
-            label.set_halign(Gtk.Align.START)
-            if not enabled:
-                label.set_opacity(0.6)
-            row.pack_start(label, True, True, 0)
-            
-            # Enable Switch
-            switch = Gtk.Switch()
-            switch.set_active(enabled)
-            switch.connect("state-set", self._on_custom_command_toggled, i)
-            row.pack_start(switch, False, False, 0)
-            
-            # Delete button
-            del_btn = Gtk.Button(label="🗑️")
-            del_btn.get_style_context().add_class("refresh-btn")
-            del_btn.connect("clicked", self._on_delete_custom_command, i)
-            row.pack_start(del_btn, False, False, 0)
-            
-            self.custom_listbox.add(row)
-        
-        self.custom_listbox.show_all()
-        
-    def _on_custom_command_toggled(self, switch, state, index):
-        """Toggle enabled state of custom command."""
-        commands = self.settings.custom_commands
-        if 0 <= index < len(commands):
-            commands[index]["enabled"] = state
-            # Not saving to file yet, just updating object
-            self._refresh_custom_commands() # To update label style
-            return True
-        return False
-
-    def _on_add_custom_command(self, button):
-        trigger = self.new_cmd_trigger.get_text().strip().lower()
-        val = self.new_cmd_value.get_text().strip()
-        ctype = self.new_cmd_type.get_active_id()
-        req_end = self.new_cmd_end.get_active()
-        
-        if not trigger or not val:
-            return
-            
-        # Check duplicate
-        for cmd in self.settings.custom_commands:
-            if cmd['trigger'] == trigger:
-                dialog = Gtk.MessageDialog(
-                    transient_for=self,
-                    message_type=Gtk.MessageType.ERROR,
-                    buttons=Gtk.ButtonsType.OK,
-                    text="Duplicate Trigger"
-                )
-                dialog.format_secondary_text(f"Command 'okay {trigger}' already exists.")
-                dialog.run()
-                dialog.destroy()
-                return
-
-        new_cmd = {
-            "trigger": trigger,
-            "type": ctype,
-            "value": val,
-            "requires_end": req_end,
-            "enabled": True
-        }
-        
-        cmds = list(self.settings.custom_commands)
-        cmds.append(new_cmd)
-        
-        # Direct modify of singleton list
-        self.settings._settings["custom_commands"] = cmds 
-        
-        self._refresh_custom_commands()
-        
-        # Clear form
-        self.new_cmd_trigger.set_text("")
-        self.new_cmd_value.set_text("")
-        self.new_cmd_end.set_active(False)
-
-    def _on_delete_custom_command(self, button, index):
-        cmds = list(self.settings.custom_commands)
-        if 0 <= index < len(cmds):
-            cmds.pop(index)
-            self.settings._settings["custom_commands"] = cmds
-            self._refresh_custom_commands()
 
     def _refresh_ollama_models_internal(self):
         """Internal method to refresh Ollama models list."""

@@ -476,35 +476,25 @@ class VoiceCommandDetector:
     def _type_key(self, key: str):
         """Type a key combination."""
         print(f"Typing key: {key}")
-        if self._injector:
-            self._injector.type_key(key)
-        else:
-            try:
-                subprocess.run(["ydotool", "key", key], check=True, timeout=5)
-            except Exception as e:
-                print(f"Key type error: {e}")
+        # Ensure we have an injector with proper key mapping
+        if self._injector is None:
+            from .system import TextInjector
+            self._injector = TextInjector()
+        self._injector.type_key(key)
 
     def _type_text(self, text: str):
         """Type raw text."""
         print(f"Typing text: {text}")
-        if self._injector:
-            # We don't have a direct type_text on injector typically, 
-            # usually it's handled by returning text to the main app loop?
-            # Actually, `commands.py` actions seem to rely on side effects mostly for keys/browser.
-            # But the main loop handles text injection for the *rest* of the transcription.
-            # If a command action types text, it needs a way to do it.
-            # The injector (InputInjector from system.py) likely has type_string or similar.
-            if hasattr(self._injector, 'type_string'):
-                self._injector.type_string(text)
-            else:
-                 # Fallback using ydotool
-                 subprocess.run(["ydotool", "type", text], check=True)
+        if self._injector and hasattr(self._injector, 'type_string'):
+            self._injector.type_string(text)
         else:
             try:
-                subprocess.run(["ydotool", "type", text], check=True)
+                # Add delay to prevent dropped characters
+                # --key-delay 15 usually safe for ydotool
+                subprocess.run(["ydotool", "type", "--key-delay", "15", text], check=True)
             except Exception as e:
                 print(f"Text type error: {e}")
-    
+
     def _browser_search(self, query: str):
         """Open browser with search query."""
         if query and query.strip():
@@ -515,7 +505,7 @@ class VoiceCommandDetector:
             # Default to homepage if no query
             print("Opening browser home")
             webbrowser.open("https://www.google.com")
-    
+
     def _ollama_get_response(self, query: str) -> str:
         """
         Query Ollama and return the response for substitution.
@@ -571,13 +561,22 @@ class VoiceCommandDetector:
         
         # Collapse newlines into spaces (for clean single-line output)
         sanitized = sanitized.replace('\n', ' ').replace('\r', '')
+        # ASCII Sanitization: Replace smart quotes and dashes to ensure ydotool can type them
+        replacements = {
+            '“': '"', '”': '"',
+            '‘': "'", '’': "'",
+            '–': '-', '—': '-',
+            '…': '...'
+        }
+        for char, repl in replacements.items():
+            sanitized = sanitized.replace(char, repl)
         
         # Clean up multiple spaces
         sanitized = re.sub(r'\s+', ' ', sanitized).strip()
         
         print(f"Ollama response sanitized: {len(sanitized)} chars")
         return sanitized
-    
+
     def _raw_text_handler(self, content: str):
         """
         Handler for raw text command.
@@ -592,10 +591,6 @@ class VoiceCommandDetector:
         Substitution handler for raw text - returns content unchanged.
         This allows users to dictate text containing command trigger words
         without them being interpreted as commands.
-        
-        Example: "okay raw text please copy this file to the backup folder okay done"
-        Returns: "please copy this file to the backup folder"
-        (The word "copy" is NOT treated as a command)
         """
         return content.strip()
 

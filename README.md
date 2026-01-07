@@ -190,10 +190,22 @@ You can now create your own voice commands in Settings!
 
 1. Go to **Settings** -> **Custom Commands**
 2. Click **Add Command**
-3. Choose:
-   - **Shortcut**: Press a key combo (e.g. `Ctrl+Shift+T`)
-   - **Text**: Type a phrase (e.g. "Best regards, Name")
-4. Set your trigger phrase (e.g. "Okay restore")
+3. Set your trigger phrase (e.g. "explain code")
+4. Use the **Rich Macro Editor** to define the action
+
+#### ✨ Rich Command Editor
+The new macro editor supports:
+
+| Feature | Usage | Example |
+|---------|-------|---------|
+| **Smart Autocomplete** | Type `@` to see dropdown of all commands | `@delta` |
+| **Query Box** | Selecting `requires_end` commands adds an editable query box | `@delta` + [explain this code] |
+| **Keystroke Recorder** | Click ⌨️ to record key combos | `<ctrl+c>` |
+| **Mixed Content** | Combine Text, Keys, and Commands! | `Copying <ctrl+c> and explaining... @delta[explain clipboard]` |
+
+**Command Icons:**
+- ⚡ **Instant** - Executes immediately (no end phrase needed)
+- 🛑 **Block** - Requires content and "Okay Done" end phrase
 
 #### 🔄 Renaming Built-in Commands
 Don't like saying "Okay copy"? rename it!
@@ -209,9 +221,9 @@ You can create custom commands that reference or extend other commands.
 **Examples:**
 | Trigger | Value | Effect |
 |---------|-------|--------|
-| `Okay code` | `@delta write code for` | Equivalent to saying "Okay delta write code for [content]" |
+| `Okay code` | `@delta[write code for {content}]` | Uses AI to write code based on what you say |
 | `Okay dup` | `@copy` | "Okay dup" triggers "Okay copy" |
-| `Okay explain` | `@delta explain this code` | Quick shortcut for AI explanation |
+| `Okay explain` | `@delta[explain this code]` | Quick shortcut for AI explanation |
 
 You can also **Disable Built-in Commands** in the "System Commands" section if they interfere with your dictation.
 
