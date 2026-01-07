@@ -105,6 +105,13 @@ These execute immediately. No end phrase needed.
 | `Okay new line` | Enter | Insert new line |
 | `Okay enter` | Enter | Press Enter key |
 | `Okay tab` | Tab | Press Tab key |
+| `Okay super` | Super (Windows) | Open Activities/Start |
+| `Okay lock` | Super+L | Lock Screen |
+| `Okay command prompt` | Alt+F2 | Run Command Prompt |
+| `Okay tab` | Alt+Tab | Switch Window (Quick) |
+| `Okay new tab` | Ctrl+T | New Browser Tab |
+| `Okay new window` | Ctrl+N | New Window |
+| `Okay press tab` | Tab | Press Tab Key (Literal) |
 
 ### 2. Block Commands
 These require content and an end phrase.
@@ -118,6 +125,9 @@ These require content and an end phrase.
 | `Okay search` | Google Search | `Okay search what is linux okay done` |
 | `Okay google` | Google Search | `Okay google weather today okay done` |
 | `Okay delta` | Local AI Query | `Okay delta write a poem okay done` |
+| `Okay raw text` | Type Verbatim | `Okay raw text ignore commands okay done` |
+
+> **Note:** "Raw Text" mode ignores any command triggers inside it. Use this when dictating text that might contain words like "okay", "copy", etc.
 
 ### 3. Advanced Features
 
@@ -172,7 +182,20 @@ Right-click the tray icon → **Settings** to configure:
 | **Hotkey** | Custom keyboard shortcut |
 | **Silence Duration** | Auto-stop timeout |
 | **Input Device** | Microphone selection |
+| **Input Device** | Microphone selection |
 | **Auto-start** | Launch on login |
+
+### Custom Commands 🆕
+You can now create your own voice commands in Settings!
+
+1. Go to **Settings** -> **Custom Commands**
+2. Click **Add Command**
+3. Choose:
+   - **Shortcut**: Press a key combo (e.g. `Ctrl+Shift+T`)
+   - **Text**: Type a phrase (e.g. "Best regards, Name")
+4. Set your trigger phrase (e.g. "Okay restore")
+
+You can also **Disable Built-in Commands** in the "System Commands" section if they interfere with your dictation.
 
 ## 🎯 Whisper Models
 

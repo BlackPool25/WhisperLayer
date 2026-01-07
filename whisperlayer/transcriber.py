@@ -128,19 +128,54 @@ class Transcriber:
             print(f"Loading Whisper model: {model_name}...")
             print(f"Device: {self.device} ({self.device_name})")
             
-            import whisper
-            
-            self.model = whisper.load_model(
-                model_name,
-                device=self.device
-            )
-            self._is_loaded = True
-            self._last_use_time = time.time()
-            
-            # Start idle monitor
-            self._start_idle_monitor()
-            
-            print("Model loaded successfully!")
+            try:
+                import whisper
+                
+                # Check if model is supported by standard Whisper
+                # Note: Whisper library doesn't expose a simple list of valid model names easily reachable 
+                # without an import which we did above. 
+                # But we can just try/except.
+                
+                self.model = whisper.load_model(
+                    model_name,
+                    device=self.device
+                )
+                self._is_loaded = True
+                self._last_use_time = time.time()
+                
+                # Start idle monitor
+                self._start_idle_monitor()
+                
+                print("Model loaded successfully!")
+                
+            except Exception as e:
+                print(f"Error loading model '{model_name}': {e}")
+                print("Falling back to 'turbo' model...")
+                
+                if model_name == "turbo":
+                    # If we already failed on turbo, fall back to base
+                    fallback_model = "base"
+                    print("Turbo failed, trying 'base'...")
+                else:
+                    fallback_model = "turbo"
+                
+                try:
+                    self.model = whisper.load_model(
+                        fallback_model,
+                        device=self.device
+                    )
+                    self._is_loaded = True
+                    self._last_use_time = time.time()
+                    self._start_idle_monitor()
+                    print(f"Fallback model '{fallback_model}' loaded successfully!")
+                    
+                    # Update settings to reflect fallback (optional, but good for UX)
+                    # We won't save it to disk to avoid overwriting user preference permanently
+                    # if it was just a temporary environment issue.
+                    
+                except Exception as e2:
+                    print(f"CRITICAL: Fallback model failed: {e2}")
+                    raise e2
     
     def set_context(self, text: str):
         """Set context from previous transcription to help reduce hallucination."""

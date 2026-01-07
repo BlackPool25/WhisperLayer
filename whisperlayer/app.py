@@ -92,10 +92,21 @@ class WhisperLayerApp:
         # Start hotkey listener
         self.hotkey.start()
         
+        # Set application name for task managers
+        try:
+            import gi
+            gi.require_version('GLib', '2.0')
+            from gi.repository import GLib
+            GLib.set_prgname('whisperlayer')
+            GLib.set_application_name('WhisperLayer')
+        except Exception as e:
+            print(f"Warning: Could not set application name: {e}")
+
         # Set up signal handler for clean exit
         def signal_handler(sig, frame):
             print("\nShutting down...")
-            self.shutdown()
+            # Signal the main loop to exit
+            self._completion_event.set()
             
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
@@ -105,13 +116,26 @@ class WhisperLayerApp:
         try:
             self._completion_event.wait()
         except KeyboardInterrupt:
-            self.shutdown()
+            # Should be handled by signal handler, but just in case
+            pass
+            
+        # Perform clean shutdown
+        self.shutdown()
+        
+        # Verify if we should force exit to avoid segfaults from mixed Qt/GTK usage
+        # Hard exit via C library to bypass ALL cleanup
+        import sys
+        sys.stdout.flush()
+        import ctypes
+        try:
+            ctypes.CDLL(None)._exit(0)
+        except:
+            import os
+            os._exit(0)
     
     def shutdown(self):
         """Clean shutdown of all components."""
-        if self._completion_event.is_set():
-            return
-            
+        # Ensure it is set (in case called from elsewhere)
         self._completion_event.set()
         
         if self._is_recording:
@@ -119,6 +143,12 @@ class WhisperLayerApp:
         
         if self.hotkey:
             self.hotkey.stop()
+        
+        if self.tray:
+            try:
+                self.tray.stop()
+            except:
+                pass
         
         if self.overlay:
             self.overlay.stop()

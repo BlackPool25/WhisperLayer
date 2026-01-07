@@ -156,7 +156,7 @@ class SystemTray:
         """Run GTK main loop in background thread."""
         # Create indicator
         self._indicator = AppIndicator3.Indicator.new(
-            "whisperlayer",
+            "whisperlayer-tray",
             "audio-input-microphone",
             AppIndicator3.IndicatorCategory.APPLICATION_STATUS
         )
@@ -172,7 +172,22 @@ class SystemTray:
     def stop(self):
         """Stop the system tray."""
         self._running = False
-        GLib.idle_add(Gtk.main_quit)
+        
+        # Signal GTK loop to quit safely
+        def quit_gtk():
+            try:
+                Gtk.main_quit()
+            except:
+                pass
+                
+        GLib.idle_add(quit_gtk)
+        
+        # Wait for thread to finish
+        if self._gtk_thread and self._gtk_thread.is_alive():
+            try:
+                self._gtk_thread.join(timeout=2.0)
+            except:
+                pass
     
     def show_notification(self, title: str, message: str):
         """Show a desktop notification."""

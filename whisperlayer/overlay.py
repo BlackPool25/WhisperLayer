@@ -407,11 +407,42 @@ class OverlayController:
         
         self._ready_event.set()
         self._app.exec()
+        
+        # Clean up in the CORRECT thread
+        if self._window:
+            # Stop timer explicitly
+            if hasattr(self._window, 'shimmer_timer'):
+                self._window.shimmer_timer.stop()
+                del self._window.shimmer_timer
+                
+            self._window.close()
+            # Force deletion to clean up QObjects while thread is alive
+            import sip
+            try:
+                sip.delete(self._window)
+            except:
+                del self._window
+            self._window = None
+            
+        if self._signals:
+            try:
+                sip.delete(self._signals)
+            except:
+                del self._signals
+            self._signals = None
     
     def stop(self):
         """Stop the Qt event loop."""
         if self._app:
             self._app.quit()
+        
+        # Wait for thread to finish to prevent segfaults on exit
+        if self._qt_thread and self._qt_thread.is_alive():
+            try:
+                self._qt_thread.join(timeout=2.0)
+            except:
+                pass
+        
         self._is_running = False
     
     def show(self):

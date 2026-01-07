@@ -48,6 +48,9 @@ DEFAULTS = {
     "ollama_custom_models": [],  # User-added model names
     "ollama_custom_prompt_enabled": False,  # "Change at your own risk" toggle
     "ollama_system_prompt": DEFAULT_OLLAMA_PROMPT,
+    # Command settings
+    "custom_commands": [],  # List of dicts: {trigger, type, value, requires_end, enabled}
+    "disabled_commands": [],  # List of triggers of built-in commands that are disabled
 }
 
 # Available Whisper models (from openai-whisper)
@@ -465,6 +468,15 @@ class Settings:
     @property
     def ollama_system_prompt(self) -> str:
         return self.get("ollama_system_prompt", DEFAULT_OLLAMA_PROMPT)
+
+    # Command properties
+    @property
+    def custom_commands(self) -> list:
+        return self.get("custom_commands", [])
+
+    @property
+    def disabled_commands(self) -> list:
+        return self.get("disabled_commands", [])
 
 
 # Global settings instance

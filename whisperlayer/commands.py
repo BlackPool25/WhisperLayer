@@ -28,6 +28,7 @@ class CommandDefinition:
     substitution_handler: Optional[Callable[[], str]] = None # Handler for text substitution (when nested)
     content_substitution_handler: Optional[Callable[[str], str]] = None  # Handler for content-based substitution (like delta)
     category: str = "general"       # Category for grouping
+    scan_content: bool = True       # Whether to recursively scan content for other commands
 
 
 @dataclass
@@ -63,6 +64,61 @@ class VoiceCommandDetector:
         
         # Cache for Ollama response (used for substitution pattern)
         self._last_ollama_response: str = ""
+        
+        # Load commands
+        self.reload_commands()
+
+    def reload_commands(self):
+        """Reload all commands from defaults and settings."""
+        self.commands.clear()
+        self._register_default_commands()
+        self._load_custom_commands()
+
+    def _load_custom_commands(self):
+        """Load custom commands from settings."""
+        from .settings import get_settings
+        settings = get_settings()
+        
+        for cmd in settings.custom_commands:
+            if not cmd.get("enabled", True):
+                continue
+                
+            trigger = cmd["trigger"]
+            cmd_type = cmd["type"]
+            value = cmd["value"]
+            requires_end = cmd["requires_end"]
+            
+            action = None
+            sub_handler = None
+            content_sub_handler = None
+            requires_content = False
+            
+            if cmd_type == "shortcut":
+                action = lambda v=value: self._type_key(v)
+            elif cmd_type == "text":
+                # For text, we use substitution to insert it
+                # If it's a block command (requires_end), it replaces content? 
+                # Actually, simpler: "text" type just types the text.
+                # If substitution is needed, we need a handler.
+                # Let's keep it simple: Action types the text.
+                action = lambda v=value: self._type_text(v)
+            elif cmd_type == "delta":
+                # Custom AI command
+                requires_content = True
+                requires_end = True
+                action = lambda x: None
+                # We need a way to pass the custom prompt if we want different personas
+                # For now, just map to standard delta handler with the common prompt
+                # Or maybe later allow custom prompts per command
+                content_sub_handler = self._ollama_get_response
+            
+            if action or content_sub_handler:
+                self.register(trigger, action, 
+                              requires_content=requires_content, 
+                              requires_end=requires_end,
+                              substitution_handler=sub_handler,
+                              content_substitution_handler=content_sub_handler,
+                              category="custom")
     
     # ... prompt hint methods ...
 
@@ -81,21 +137,58 @@ class VoiceCommandDetector:
         self.register("delete", lambda: self._type_key("ctrl+BackSpace"), requires_end=False)
         self.register("new line", lambda: self._type_key("Return"), requires_end=False)
         self.register("enter", lambda: self._type_key("Return"), requires_end=False)
-        self.register("tab", lambda: self._type_key("Tab"), requires_end=False)
+        
+        # --- System Shortcut Commands ---
+        # Super key - Activities overview (search apps, files, windows)
+        self.register("super", lambda: self._type_key("super"), requires_end=False)
+        
+        # Alt+F2 - Run command prompt
+        self.register("command prompt", lambda: self._type_key("alt+F2"), requires_end=False)
+        
+        # Super+L - Lock screen
+        self.register("lock", lambda: self._type_key("super+l"), requires_end=False)
+        
+        # Alt+Tab - Switch between windows (replaces old tab which was just Tab key)
+        self.register("tab", lambda: self._type_key("alt+Tab"), requires_end=False)
+        
+        # Ctrl+T - New tab
+        self.register("new tab", lambda: self._type_key("ctrl+t"), requires_end=False)
+        
+        # Ctrl+N - New window
+        self.register("new window", lambda: self._type_key("ctrl+n"), requires_end=False)
+        
+        # Old tab key kept as "press tab" just in case people want the key specifically
+        self.register("press tab", lambda: self._type_key("Tab"), requires_end=False)
         
         # --- Content Commands (need "command action ... command end") ---
         self.register("search", self._browser_search, requires_content=True, requires_end=True)
         self.register("google", self._browser_search, requires_content=True, requires_end=True)
+        
         # Delta uses content_substitution_handler - response replaces command text in buffer
         self.register("delta", lambda x: None, requires_content=True, requires_end=True,
                       content_substitution_handler=self._ollama_get_response)
+        
+        # --- Raw Text Mode ---
+        # "okay raw text [content] okay done" - Types content verbatim without command detection
+        # This is useful when dictating text that contains command trigger words
+        self.register("raw text", self._raw_text_handler, requires_content=True, requires_end=True,
+                      content_substitution_handler=self._raw_text_passthrough, scan_content=False)
+    
     
     def register(self, trigger: str, action: Callable, 
                  requires_content: bool = False, requires_end: bool = True,
                  substitution_handler: Optional[Callable[[], str]] = None,
                  content_substitution_handler: Optional[Callable[[str], str]] = None,
-                 category: str = "general"):
+                 category: str = "general",
+                 scan_content: bool = True):
         """Register a new voice command."""
+        from .settings import get_settings
+        settings = get_settings()
+        
+        # Check if disabled
+        if trigger.lower().strip() in [t.lower() for t in settings.disabled_commands]:
+            return
+
         self.commands[trigger.lower().strip()] = CommandDefinition(
             trigger=trigger.lower().strip(),
             action=action,
@@ -103,7 +196,8 @@ class VoiceCommandDetector:
             requires_end=requires_end,
             substitution_handler=substitution_handler,
             content_substitution_handler=content_substitution_handler,
-            category=category
+            category=category,
+            scan_content=scan_content
         )
         
     def _get_clipboard_content(self) -> str:
@@ -213,12 +307,11 @@ class VoiceCommandDetector:
                                 c_start, c_end = match.span(f"CONTENT_{name[4:]}")
                                 content_orig = text[c_start:c_end]
                             
-                            # CONTENT SUBSTITUTION CHECK:
                             # If this command has a content_substitution_handler (like delta),
                             # execute it now and use the result as replacement text.
                             if cmd_def.content_substitution_handler:
-                                # First, recursively process nested commands in content
-                                if content_orig:
+                                # First, recursively process nested commands in content (IF ALLOWED)
+                                if content_orig and cmd_def.scan_content:
                                     sub_cleaned, sub_matches = self.scan_text(content_orig, is_nested=True)
                                     if sub_matches:
                                         matches.extend(sub_matches)
@@ -294,6 +387,7 @@ class VoiceCommandDetector:
     
     def _type_key(self, key: str):
         """Type a key combination."""
+        print(f"Typing key: {key}")
         if self._injector:
             self._injector.type_key(key)
         else:
@@ -301,6 +395,27 @@ class VoiceCommandDetector:
                 subprocess.run(["ydotool", "key", key], check=True, timeout=5)
             except Exception as e:
                 print(f"Key type error: {e}")
+
+    def _type_text(self, text: str):
+        """Type raw text."""
+        print(f"Typing text: {text}")
+        if self._injector:
+            # We don't have a direct type_text on injector typically, 
+            # usually it's handled by returning text to the main app loop?
+            # Actually, `commands.py` actions seem to rely on side effects mostly for keys/browser.
+            # But the main loop handles text injection for the *rest* of the transcription.
+            # If a command action types text, it needs a way to do it.
+            # The injector (InputInjector from system.py) likely has type_string or similar.
+            if hasattr(self._injector, 'type_string'):
+                self._injector.type_string(text)
+            else:
+                 # Fallback using ydotool
+                 subprocess.run(["ydotool", "type", text], check=True)
+        else:
+            try:
+                subprocess.run(["ydotool", "type", text], check=True)
+            except Exception as e:
+                print(f"Text type error: {e}")
     
     def _browser_search(self, query: str):
         """Open browser with search query."""
@@ -374,20 +489,55 @@ class VoiceCommandDetector:
         
         print(f"Ollama response sanitized: {len(sanitized)} chars")
         return sanitized
+    
+    def _raw_text_handler(self, content: str):
+        """
+        Handler for raw text command.
+        The raw text content is passed through without any command processing.
+        The action does nothing - substitution handler returns the content verbatim.
+        """
+        # No action needed - content is handled by substitution
+        pass
+    
+    def _raw_text_passthrough(self, content: str) -> str:
+        """
+        Substitution handler for raw text - returns content unchanged.
+        This allows users to dictate text containing command trigger words
+        without them being interpreted as commands.
+        
+        Example: "okay raw text please copy this file to the backup folder okay done"
+        Returns: "please copy this file to the backup folder"
+        (The word "copy" is NOT treated as a command)
+        """
+        return content.strip()
 
 
 # Simple test
 if __name__ == "__main__":
     detector = VoiceCommandDetector()
     
+    # Mock settings for custom command test
+    class MockSettings:
+        disabled_commands = []
+        custom_commands = [
+            {"trigger": "my shortcut", "type": "shortcut", "value": "<ctrl>+t", "requires_end": False, "enabled": True},
+            {"trigger": "my text", "type": "text", "value": "Hello World", "requires_end": False, "enabled": True}
+        ]
+    
+    import sys
+    sys.modules['whisperlayer.settings'] = type('obj', (object,), {'get_settings': lambda: MockSettings()})
+    
+    # Reload to pick up mocks
+    detector.reload_commands()
+
     test_cases = [
         "hello world",
         "hello jarvis copy world",
-        "jarvis and search what is python jarvis stop more text",
-        "jarvis search what is the best recipe jarvis and stop text",
-        "before jarvis paste after",
-        "jarvis new line",
-        "jarvis please copy",
+        "okay raw text please ignore okay copy inside okay done",
+        "okay raw text okay copy okay done",
+        "okay my shortcut and okay my text",
+        "okay super",
+        "okay lock",
     ]
     
     print("Testing VoiceCommandDetector:")
