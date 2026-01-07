@@ -18,10 +18,13 @@ Transform your voice into text anywhere on your Linux desktop. Press a hotkey, s
 - **🎚️ Live Streaming** - Real-time transcription as you speak
 - **🖥️ Multi-Monitor** - Scales correctly on multi-monitor setups
 - **🔧 System Tray** - Minimal, unobtrusive interface
+- **📝 Formatted AI** - Ollama responses keep lists, paragraphs, and code blocks
+- **🚀 Turbo Typing** - Optimized text injection (8ms delay) with smart buffering
 
 ## 📦 Installation
 
-### Quick Install (Recommended)
+### Auto-Install (All Distros)
+WhisperLayer supports **Ubuntu/Debian**, **Fedora**, **Arch**, and **OpenSUSE**.
 
 ```bash
 # Clone the repository
@@ -29,23 +32,24 @@ git clone https://github.com/your-username/whisperlayer.git
 cd whisperlayer
 
 # Run the installer
-chmod +x install.sh
-./install.sh
+bash install.sh
 ```
 
-The installer will:
-- Install system dependencies (auto-detects Ubuntu/Fedora/Arch)
-- Create a Python virtual environment
-- Install all Python dependencies
-- Add you to the `input` group (for global hotkeys)
-- Create a desktop launcher
-- Set up systemd service for auto-start
+The installer detects your distro and installs all dependencies automatically.
 
 ### Manual Installation
+If you prefer to do it manually:
 
 ```bash
-# Prerequisites (Ubuntu/Debian)
-sudo apt install python3-venv python3-pip python3-gi portaudio19-dev python3-pyqt5
+# 1. Install System Deps
+# Ubuntu/Debian
+sudo apt install python3-venv python3-pip python3-gi portaudio19-dev python3-pyqt5 ydotool
+
+# Fedora
+sudo dnf install python3 python3-pip python3-gobject portaudio-devel python3-qt5 ydotool
+
+# Arch
+sudo pacman -S python-virtualenv python-pip python-gobject portaudio python-pyqt5 ydotool
 
 # For NVIDIA GPU support
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
@@ -131,6 +135,17 @@ These require content and an end phrase.
 
 ### 3. Advanced Features
 
+#### 🤖 Local AI Integration (@delta)
+WhisperLayer integrates with **Ollama** to provide private, local AI assistance.
+- **Command:** `Okay delta [Query] Okay done`
+- **Effect:** Submits your query to a local LLM and types the response.
+- **Formatting:** Preserves lists, code blocks, and paragraphs automatically.
+
+**Setup:**
+1. Install Ollama: `curl -fsSL https://ollama.com/install.sh | sh`
+2. Pull a model (Gemma 2B recommended for speed): `ollama pull gemma:2b`
+3. Start the server: `ollama serve` (or let it run in background)
+
 #### 🔗 Nested Substitution (Search with Paste)
 You can use `okay paste` *inside* other commands to use your clipboard content as input.
 
@@ -177,35 +192,31 @@ Right-click the tray icon → **Settings** to configure:
 
 | Setting | Description |
 |---------|-------------|
-| **Model** | Whisper model size (tiny/base/small/medium/large/turbo) |
+| **Model** | Whisper model size (tiny...turbo) |
 | **Device** | GPU acceleration (auto/cuda/cpu) |
 | **Hotkey** | Custom keyboard shortcut |
 | **Silence Duration** | Auto-stop timeout |
 | **Input Device** | Microphone selection |
-| **Input Device** | Microphone selection |
 | **Auto-start** | Launch on login |
 
-### Custom Commands 🆕
-You can now create your own voice commands in Settings!
+### Custom Commands
+Create powerful voice macros with the **Rich Command Editor**:
 
 1. Go to **Settings** -> **Custom Commands**
 2. Click **Add Command**
-3. Set your trigger phrase (e.g. "explain code")
-4. Use the **Rich Macro Editor** to define the action
+3. Defines your **Trigger** (e.g. "explain code")
+4. Use the **Macro Editor** to build your action
 
-#### ✨ Rich Command Editor
-The new macro editor supports:
+#### ✨ Macro Editor Features:
+- **⌨️ Key Recording**: Click the keyboard icon to record real shortcuts (e.g. `<ctrl+c>`).
+- **🤖 AI Actions**: Type `@` to select commands like `@delta`.
+- **📦 Smart Queries**: Commands like `@delta` automatically add a query box for your prompt.
+- **🔄 Mixed Mode**: Combine text, keys, and AI commands in one macro!
+  - *Example:* `Copying selection <ctrl+c>... @delta[Explain this code: {content}]`
 
-| Feature | Usage | Example |
-|---------|-------|---------|
-| **Smart Autocomplete** | Type `@` to see dropdown of all commands | `@delta` |
-| **Query Box** | Selecting `requires_end` commands adds an editable query box | `@delta` + [explain this code] |
-| **Keystroke Recorder** | Click ⌨️ to record key combos | `<ctrl+c>` |
-| **Mixed Content** | Combine Text, Keys, and Commands! | `Copying <ctrl+c> and explaining... @delta[explain clipboard]` |
-
-**Command Icons:**
-- ⚡ **Instant** - Executes immediately (no end phrase needed)
-- 🛑 **Block** - Requires content and "Okay Done" end phrase
+#### 🏷️ Command Types
+- **⚡ Instant**: Executes immediately (Keys, simple text).
+- **🛑 Block**: Requires an end phrase (e.g. "Okay done") to capture content.
 
 #### 🔄 Renaming Built-in Commands
 Don't like saying "Okay copy"? rename it!

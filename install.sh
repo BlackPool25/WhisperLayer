@@ -13,7 +13,8 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DESKTOP_FILE="$HOME/.local/share/applications/whisperlayer.desktop"
 SERVICE_FILE="$HOME/.config/systemd/user/whisperlayer.service"
-AUTOSTART_FILE="$HOME/.config/autostart/whisperlayer.desktop"
+AUTOSTART_DIR="$HOME/.config/autostart"
+AUTOSTART_FILE="$AUTOSTART_DIR/whisperlayer.desktop"
 
 # Colors for pretty output
 RED='\033[0;31m'
@@ -125,30 +126,41 @@ print_header
 print_step "Checking system dependencies..."
 
 if command -v apt-get &> /dev/null; then
-    echo "  Detected: Debian/Ubuntu"
+    echo "  Detected: Debian/Ubuntu (apt)"
     print_step "Installing system packages (may require sudo password)..."
     sudo apt-get update -qq 2>/dev/null || true
     sudo apt-get install -y -qq \
         python3 python3-venv python3-pip python3-gi \
         portaudio19-dev libgirepository1.0-dev gir1.2-appindicator3-0.1 \
         python3-pyqt5 ydotool 2>/dev/null || print_warning "Some packages may already be installed"
+        
 elif command -v dnf &> /dev/null; then
-    echo "  Detected: Fedora/RHEL"
+    echo "  Detected: Fedora/RHEL (dnf)"
     print_step "Installing system packages..."
     sudo dnf install -y -q \
         python3 python3-virtualenv python3-pip python3-gobject \
         portaudio-devel gobject-introspection-devel libappindicator-gtk3 \
         python3-qt5 ydotool 2>/dev/null || print_warning "Some packages may already be installed"
+        
 elif command -v pacman &> /dev/null; then
-    echo "  Detected: Arch Linux"
+    echo "  Detected: Arch Linux (pacman)"
     print_step "Installing system packages..."
     sudo pacman -S --noconfirm --needed \
         python python-virtualenv python-pip python-gobject \
         portaudio gobject-introspection libappindicator-gtk3 \
         python-pyqt5 ydotool 2>/dev/null || print_warning "Some packages may already be installed"
+
+elif command -v zypper &> /dev/null; then
+    echo "  Detected: OpenSUSE (zypper)"
+    print_step "Installing system packages..."
+    sudo zypper install -y \
+        python3 python3-virtualenv python3-pip python3-gobject \
+        portaudio-devel gobject-introspection-devel libappindicator3-1 \
+        python3-qt5 ydotool 2>/dev/null || print_warning "Some packages may already be installed"
+        
 else
-    print_warning "Could not detect package manager. Please install manually:"
-    echo "  - python3, python3-venv, python3-gi, portaudio, PyQt5, ydotool"
+    print_warning "Could not detect supported package manager (apt, dnf, pacman, zypper)."
+    echo "  Please manually install: python3, python3-venv, python3-gi, portaudio, PyQt5, ydotool"
 fi
 
 # Check Python
@@ -202,61 +214,52 @@ fi
 print_success "Model set to: $SELECTED_MODEL"
 
 # Check if user is in input group
-print_step "Checking group permissions..."
+print_step "Checking permissions (input group)..."
 if [ "$IN_CONTAINER" = true ]; then
     print_warning "Running in container - checking input group exists..."
-    # Create input group if it doesn't exist
     if ! getent group input > /dev/null 2>&1; then
-        if command -v groupadd > /dev/null 2>&1; then
-            groupadd input 2>/dev/null || true
-            print_success "Created 'input' group"
-        else
-            print_warning "Cannot create 'input' group - groupadd not available"
-        fi
-    else
-        print_success "'input' group exists"
-    fi
-    # Skip adding user to group if running as root (common in containers)
-    if [ "$(id -u)" = "0" ]; then
-        print_warning "Running as root - skipping usermod (not needed in container)"
-    elif getent group input > /dev/null 2>&1; then
-        if ! groups | grep -q input; then
-            usermod -aG input "$USER" 2>/dev/null || print_warning "Could not add user to input group"
-        fi
+        groupadd input 2>/dev/null || true
     fi
 else
     if ! groups | grep -q input; then
         echo ""
         print_warning "Adding user to 'input' group (required for global hotkeys)..."
         sudo usermod -aG input "$USER"
-        print_warning "You'll need to LOG OUT and back in for this to take effect."
+        print_warning "NOTE: You MUST Log out and Log back to apply this permission!"
     else
         print_success "User already in 'input' group"
     fi
 fi
 
-# Set up uinput permissions (skip in containers - no udev)
-print_step "Setting up uinput permissions..."
+# Set up uinput/ydotool permissions securely
+print_step "Setting up ydotool/uinput permissions..."
 if [ "$IN_CONTAINER" = true ]; then
-    print_warning "Running in container - skipping udev rules setup"
+    print_warning "Running in container - skipping udev checks"
 else
     if [ ! -f /etc/udev/rules.d/99-uinput.rules ]; then
+        echo "  Creating udev rule for uinput access..."
         sudo bash -c 'echo "KERNEL==\"uinput\", MODE=\"0660\", GROUP=\"input\"" > /etc/udev/rules.d/99-uinput.rules'
         sudo udevadm control --reload-rules
         sudo udevadm trigger
-        print_success "uinput rules configured"
+        print_success "uinput permissions configured"
     else
         print_success "uinput rules already exist"
     fi
+    
+    # Check /dev/uinput access
+    if [ ! -r /dev/uinput ] || [ ! -w /dev/uinput ]; then
+        print_warning "Current user cannot access /dev/uinput yet."
+        print_warning "Please REBOOT or LOG OUT/IN after install."
+    fi
 fi
 
-# Create directories (only if not in container)
+# Desktop Integration
 if [ "$IN_CONTAINER" = true ]; then
-    print_warning "Running in container - skipping desktop/systemd integration"
+    print_warning "Running in container - skipping desktop integration"
 else
     mkdir -p "$HOME/.local/share/applications"
     mkdir -p "$HOME/.config/systemd/user"
-    mkdir -p "$HOME/.config/autostart"
+    mkdir -p "$AUTOSTART_DIR"
 
     # Install desktop file
     print_step "Installing desktop launcher..."
@@ -272,6 +275,7 @@ Categories=Utility;Accessibility;
 Keywords=voice;speech;transcription;typing;stt;whisper;
 StartupNotify=false
 EOF
+    chmod +x "$DESKTOP_FILE"
     print_success "Desktop launcher installed"
 
     # Install systemd service
@@ -292,7 +296,6 @@ Environment=XDG_RUNTIME_DIR=/run/user/%U
 [Install]
 WantedBy=default.target
 EOF
-
     # Reload systemd
     systemctl --user daemon-reload 2>/dev/null || true
     print_success "Systemd service installed"
@@ -306,41 +309,34 @@ echo ""
 echo "  WhisperLayer is ready to use!"
 echo ""
 echo -e "  ${BLUE}Model:${NC} $SELECTED_MODEL"
-echo -e "  ${BLUE}Hotkey:${NC} Ctrl+Alt+F (default, change in Settings)"
-echo ""
-echo "  Launch options:"
-if [ "$IN_CONTAINER" = true ]; then
-    echo "    • From terminal: $SCRIPT_DIR/.venv/bin/python -m whisperlayer"
-else
-    echo "    • From Applications menu: Search 'WhisperLayer'"
-    echo "    • From terminal: whisperlayer"
-    echo "    • As service: systemctl --user start whisperlayer"
-fi
+echo -e "  ${BLUE}Hotkey:${NC} Ctrl+Alt+F (default)"
 echo ""
 
 # Ask about auto-start (skip in containers)
 if [ "$IN_CONTAINER" = true ]; then
-    print_warning "Container detected - skipping auto-start setup"
+    print_warning "Container detected - skipping auto-start"
 else
     echo -e "${YELLOW}═══════════════════════════════════════════════${NC}"
-    read -p "Enable auto-start on login? [y/N]: " -n 1 -r
+    read -p "Enable auto-start on login? (Recommended) [Y/n]: " -n 1 -r
     echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        systemctl --user enable whisperlayer 2>/dev/null || true
-        print_success "Auto-start enabled"
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        # 1. Enable Systemd service
+        if systemctl --user enable whisperlayer 2>/dev/null; then
+            print_success "Auto-start enabled (Systemd)"
+        else
+            # 2. Fallback to XDG Autostart
+            cp "$DESKTOP_FILE" "$AUTOSTART_FILE"
+            print_success "Auto-start enabled (XDG Autostart fallback)"
+        fi
     else
-        echo "  Skipped. Enable later with: systemctl --user enable whisperlayer"
+        echo "  Skipped."
     fi
 fi
 
 echo ""
 if [ "$IN_CONTAINER" != true ] && ! groups | grep -q input; then
-    echo -e "${YELLOW}╔════════════════════════════════════════════╗${NC}"
-    echo -e "${YELLOW}║  IMPORTANT: Please log out and back in     ║${NC}"
-    echo -e "${YELLOW}║  for group permissions to take effect!     ║${NC}"
-    echo -e "${YELLOW}╚════════════════════════════════════════════╝${NC}"
-    echo ""
+    echo -e "${RED}IMPORTANT: You must LOG OUT and back in to fix permissions!${NC}"
 fi
 
-echo -e "${GREEN}Done! Enjoy WhisperLayer 🎤${NC}"
+echo -e "${GREEN}Done! Run 'whisperlayer' to start.${NC}"
 echo ""
