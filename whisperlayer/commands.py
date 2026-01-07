@@ -443,8 +443,8 @@ class VoiceCommandDetector:
         for start, end, repl in replacement_spans:
             cleaned = cleaned[:start] + repl + cleaned[end:]
         
-        # Clean up double spaces
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        # Clean up double spaces (preserve newlines)
+        cleaned = re.sub(r'[ \t]+', ' ', cleaned).strip()
 
         return cleaned, matches
     
@@ -541,11 +541,9 @@ class VoiceCommandDetector:
         if not response:
             return "[No response from Ollama]"
         
-        # Sanitize the response for clean output:
-        # 1. Remove markdown formatting (*, **, ``, etc.)
-        # 2. Remove bullet points
-        # 3. Collapse newlines into spaces
-        # 4. Clean up excessive whitespace
+        # Sanitize the response, but PRESERVE structure (bullets, newlines)
+        # 1. Remove markdown style formatting (*, **, ``, etc.) but keep the text
+        # 2. Key sanitization (smart quotes to ASCII)
         
         sanitized = response
         
@@ -556,11 +554,6 @@ class VoiceCommandDetector:
         sanitized = re.sub(r'_(.+?)_', r'\1', sanitized)        # _italic_
         sanitized = re.sub(r'`(.+?)`', r'\1', sanitized)        # `code`
         
-        # Remove markdown bullet points
-        sanitized = re.sub(r'^\s*[\*\-\+]\s+', '', sanitized, flags=re.MULTILINE)
-        
-        # Collapse newlines into spaces (for clean single-line output)
-        sanitized = sanitized.replace('\n', ' ').replace('\r', '')
         # ASCII Sanitization: Replace smart quotes and dashes to ensure ydotool can type them
         replacements = {
             '“': '"', '”': '"',
@@ -571,8 +564,9 @@ class VoiceCommandDetector:
         for char, repl in replacements.items():
             sanitized = sanitized.replace(char, repl)
         
-        # Clean up multiple spaces
-        sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+        # Do NOT flatten newlines or remove bullets. 
+        # Clean up multiple spaces/tabs but keep newlines
+        sanitized = re.sub(r'[ \t]+', ' ', sanitized).strip()
         
         print(f"Ollama response sanitized: {len(sanitized)} chars")
         return sanitized

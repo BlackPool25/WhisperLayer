@@ -30,49 +30,64 @@ class TextInjector:
         Returns:
             True if successful, False otherwise
         """
-        if not text or not text.strip():
+        if not text:
             return False
             
         if self._ydotool_path is None:
             print("ydotool not available")
             return False
         
+        # Robust newline handling: Split by lines and press Enter explicitly
+        # This avoids ydotool type "\n" ambiguity/failures
+        normalized_text = text.replace('\r\n', '\n').replace('\r', '\n')
+        lines = normalized_text.split('\n')
+        
+        success = True
+        for i, line in enumerate(lines):
+            # Type the line content if not empty
+            if line:
+                if not self._type_raw_string(line):
+                    success = False
+            
+            # Press Enter if not the last line
+            if i < len(lines) - 1:
+                # Add a small delay before enter
+                import time
+                time.sleep(0.05)
+                if not self.type_key('enter'):
+                    print("Failed to type Enter key")
+                    success = False
+                time.sleep(0.05)
+        
+        return success
+
+    def _type_raw_string(self, text: str) -> bool:
+        """Helper to type a string without newline handling."""
         try:
             # Chunk long text to prevent ydotool timeouts/buffering issues
             # Reduced chunk size for reliability
             chunk_size = 20
             total_chunks = (len(text) + chunk_size - 1) // chunk_size
             
-            import time
-            
             for i in range(0, len(text), chunk_size):
                 chunk = text[i:i+chunk_size]
                 
                 # ydotool type command
                 # --key-delay: delay between key presses in ms
-                # Increased to 15ms to prevent dropped characters
+                # Reduced to 8ms for faster typing (balanced with reliability)
                 result = subprocess.run(
-                    [self._ydotool_path, "type", "--key-delay", "15", "--", chunk],
+                    [self._ydotool_path, "type", "--key-delay", "8", "--", chunk],
                     capture_output=True,
                     text=True,
-                    timeout=5  # Shorter timeout per chunk
+                    timeout=5
                 )
                 
                 if result.returncode != 0:
                     print(f"ydotool stderr (chunk {i//chunk_size + 1}/{total_chunks}): {result.stderr}")
                     return False
-                
-                # Small delay between chunks to let system catch up
-                if total_chunks > 1:
-                    time.sleep(0.05)
-            
             return True
-            
-        except subprocess.TimeoutExpired:
-            print("ydotool type timeout")
-            return False
         except Exception as e:
-            print(f"ydotool error: {e}")
+            print(f"Type error: {e}")
             return False
     
     def type_key(self, key: str) -> bool:
