@@ -62,6 +62,7 @@ class WhisperLayerApp:
         self.settings.on_change("input_device_id", self._on_audio_device_change)
         self.settings.on_change("silence_duration", self._on_silence_change)
         self.settings.on_change("ollama_model", self._on_ollama_model_change)
+        self.settings.on_change("custom_commands", self._on_custom_commands_change)
 
     # ... (skipping methods) ...
 
@@ -204,6 +205,13 @@ class WhisperLayerApp:
                     self.tray.show_notification("WhisperLayer", f"Ollama model: {new_value}")
         except Exception as e:
             print(f"Error loading Ollama model: {e}")
+    
+    def _on_custom_commands_change(self, new_value, old_value):
+        """Handle custom commands change - reload command detector for hot-reload."""
+        print("Custom commands changed, reloading command detector...")
+        self.command_detector.reload_commands()
+        if self.tray:
+            self.tray.show_notification("WhisperLayer", "Custom commands updated!")
     
     def _show_settings(self):
         """Show settings window."""

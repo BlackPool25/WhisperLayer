@@ -39,6 +39,7 @@ dependencies = [
     "evdev>=1.6.0",
     "rapidfuzz>=3.0.0",
     "ollama>=0.4.0",
+    "word2number>=1.1",
 ]
 
 [project.optional-dependencies]

@@ -60,7 +60,7 @@ class CommandMacroEditor(Gtk.Box):
         
         # Internal state
         self._anchor_widgets = {} # anchor -> widget
-        
+
     def get_text(self):
         """Serialize content including widgets."""
         start = self.buffer.get_start_iter()
@@ -1657,8 +1657,8 @@ class SettingsWindow(Gtk.Window):
         self.settings.set("disabled_commands", disabled, save=False, notify=True)
         self.settings.set("builtin_overrides", overrides, save=False, notify=True)
         
-        # Custom Commands already updated in memory list, just trigger save
-        # self.settings.set("custom_commands", ...) # unnecessary if we modified inplace
+        # Notify custom_commands change for hot-reload (triggers command detector reload)
+        self.settings.set("custom_commands", self.settings.custom_commands, save=False, notify=True)
         
         self.settings.save()
         

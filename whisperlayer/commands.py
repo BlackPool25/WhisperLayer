@@ -120,6 +120,7 @@ class VoiceCommandDetector:
         - @command[arg]: Executes command with argument
         - {content}: Substitutes captured voice content
         """
+        print(f"DEBUG: _execute_macro called with: '{macro_str}'")
         if content:
             macro_str = macro_str.replace("{content}", content)
         
@@ -243,6 +244,11 @@ class VoiceCommandDetector:
         self.register("delta", lambda x: None, requires_content=True, requires_end=True,
                       content_substitution_handler=self._ollama_get_response)
         
+        # --- Wait/Pause Command ---
+        # "okay wait [duration] okay done" - Pauses command execution
+        # Supports numbers (3, 300) and words ("three", "three hundred")
+        self.register("wait", self._wait_action, requires_content=True, requires_end=True)
+        
         # --- Raw Text Mode ---
         # "okay raw text [content] okay done" - Types content verbatim without command detection
         # This is useful when dictating text that contains command trigger words
@@ -340,8 +346,8 @@ class VoiceCommandDetector:
             
             if cmd.requires_end:
                  # Block Command: Base + SEP + Content + SEP + Trigger + SEP + Filler + End
-                 # Use non-greedy match for content
-                 full_pat = f"(?P<CMD_{cmd.trigger.replace(' ', '_')}>{base_pat}{SEP}(?P<CONTENT_{cmd.trigger.replace(' ', '_')}>.+?){SEP}{trigger_regex}{SEP}{filler_regex}{end_regex})"
+                 # Use non-greedy match for content, allow empty content with .*?
+                 full_pat = f"(?P<CMD_{cmd.trigger.replace(' ', '_')}>{base_pat}(?:{SEP}(?P<CONTENT_{cmd.trigger.replace(' ', '_')}>.*?))?{SEP}{trigger_regex}{SEP}{filler_regex}{end_regex})"
             else:
                  # Instant Command: Base only
                  # Ensure word boundary at end to avoid partial matches
@@ -384,7 +390,8 @@ class VoiceCommandDetector:
                             content = ""
                             if cmd_def.requires_content:
                                 content_key = f"CONTENT_{name[4:]}"
-                                content = match.groupdict().get(content_key, "").strip()
+                                content = match.groupdict().get(content_key) or ""
+                                content = content.strip()
                             
                             # Extract original case content if possible
                             start, end = match.span(name)
@@ -496,7 +503,9 @@ class VoiceCommandDetector:
                 print(f"Text type error: {e}")
 
     def _browser_search(self, query: str):
-        """Open browser with search query."""
+        """Open browser with search query and bring to focus."""
+        import subprocess
+        
         if query and query.strip():
             url = f"https://www.google.com/search?q={urllib.parse.quote_plus(query.strip())}"
             print(f"Searching: {query}")
@@ -505,6 +514,23 @@ class VoiceCommandDetector:
             # Default to homepage if no query
             print("Opening browser home")
             webbrowser.open("https://www.google.com")
+        
+        # Bring browser to focus
+        # On Wayland, wmctrl doesn't work. Use ydotool to send alt+tab
+        # which will switch to the browser that was just opened
+        import time
+        time.sleep(0.5)  # Wait for browser window to appear
+        
+        try:
+            # Use ydotool to send alt+tab (switches to most recent window - the browser)
+            result = subprocess.run(
+                ["/usr/bin/ydotool", "key", "alt+Tab"],
+                capture_output=True, timeout=2
+            )
+            if result.returncode == 0:
+                print("Focused browser via alt+tab")
+        except Exception as e:
+            print(f"Browser focus failed: {e}")
 
     def _ollama_get_response(self, query: str) -> str:
         """
@@ -587,6 +613,50 @@ class VoiceCommandDetector:
         without them being interpreted as commands.
         """
         return content.strip()
+    
+    def _parse_wait_time(self, content: str) -> float:
+        """
+        Parse wait duration from voice content.
+        Supports: numbers (3, 300), words ("three", "three hundred", "two thousand").
+        Defaults to 1 second if parsing fails.
+        """
+        if not content or not content.strip():
+            return 1.0
+        
+        text = content.lower().strip()
+        # Remove common suffixes
+        text = re.sub(r'\s*(milli)?seconds?|secs?|ms\s*', '', text).strip()
+        
+        if not text:
+            return 1.0
+        
+        # Try numeric parse first
+        try:
+            return float(text)
+        except ValueError:
+            pass
+        
+        # Use word2number for "three hundred", "two thousand", etc.
+        try:
+            from word2number import w2n
+            return float(w2n.word_to_num(text))
+        except Exception:
+            pass
+        
+        return 1.0  # Default
+    
+    def _wait_action(self, content: str):
+        """
+        Wait/pause command action.
+        Pauses command execution for the specified duration.
+        """
+        import time
+        duration = self._parse_wait_time(content)
+        # Safety cap at 1 hour
+        duration = min(duration, 3600.0)
+        print(f"Wait command: pausing for {duration} seconds...")
+        time.sleep(duration)
+        print(f"Wait complete.")
 
 
 # Simple test

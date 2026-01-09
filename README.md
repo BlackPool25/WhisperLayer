@@ -129,6 +129,7 @@ These require content and an end phrase.
 | `Okay search` | Google Search | `Okay search what is linux okay done` |
 | `Okay google` | Google Search | `Okay google weather today okay done` |
 | `Okay delta` | Local AI Query | `Okay delta write a poem okay done` |
+| `Okay wait` | Pause Execution | `Okay wait three seconds okay done` |
 | `Okay raw text` | Type Verbatim | `Okay raw text ignore commands okay done` |
 
 > **Note:** "Raw Text" mode ignores any command triggers inside it. Use this when dictating text that might contain words like "okay", "copy", etc.

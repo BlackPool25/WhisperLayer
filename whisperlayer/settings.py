@@ -354,7 +354,12 @@ class Settings:
             if save:
                 self.save()
             
-            if notify and old_value != value:
+            # For lists/dicts, always notify since in-place mods can't be detected
+            # For other types, only notify if value actually changed
+            should_notify = notify and (
+                isinstance(value, (list, dict)) or old_value != value
+            )
+            if should_notify:
                 self._notify_callbacks(key, value)
                 self._notify_change_handlers(key, value, old_value)
     
